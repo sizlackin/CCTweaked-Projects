@@ -2,7 +2,7 @@
 -- ui module -- that is one of the things it is fetching.
 
 -- Change this if you fork the project. startup.lua has the same constant.
-local REPO = "https://raw.githubusercontent.com/Metalloriff/cc-music-player/main/"
+local REPO = "https://github.com/sizlackin/CCTweaked-Projects/tree/main/MusicPlayer"
 
 -- "ui" must come first: every other program requires it.
 local FILES = { "ui", "menu", "startup", "play", "save", "savetodevice", "setvolume", "help" }
