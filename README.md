@@ -15,15 +15,14 @@ Requires CC:Tweaked. Optionally uses Advanced Peripherals for a smelting-progres
 
 ## 1. Install
 
-On the computer, type:
+On the computer, type this exactly:
 
 ```
-wget https://raw.githubusercontent.com/YOURNAME/YOURREPO/main/furnacestats.lua furnacestats.lua
+wget https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/refs/heads/main/Furnace%20Displays/furnacestats.lua furnacestats.lua
 ```
 
-Replace `YOURNAME/YOURREPO` with your repo. **Use the `raw.githubusercontent.com`
-link**, not the normal `github.com` page link — that one downloads the web page
-instead of the code.
+The `%20` in the middle is the space in the folder name — leave it as-is, it's meant
+to be there. The `furnacestats.lua` on the end is the name it saves as.
 
 To check it worked:
 
@@ -225,9 +224,10 @@ as `(modem)`, a wired one as `(modem, peripheral_hub)`.
 Computer A isn't running `furnacestats host`, or the two are more than 64 blocks
 apart. Use Ender Modems for longer distances.
 
-**Nothing happens after `wget`**
-Check the URL is the `raw.githubusercontent.com` one. Run `ls` to confirm the file
-downloaded.
+**`wget` fails or downloads nothing**
+Run `ls` to confirm `furnacestats.lua` is there. Copy the command exactly, including
+the `%20`. If your server has the HTTP API disabled, `wget` won't work at all — ask
+the owner, or paste the code in manually with `edit furnacestats.lua`.
 
 **Item names are cut off**
 They scroll automatically. If a name never scrolls it already fits. For more room,
