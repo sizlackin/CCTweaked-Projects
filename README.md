@@ -1,4 +1,4 @@
-# Furnace Stats
+# Furnace Stats (Simple)
 
 A furnace monitor for ComputerCraft / CC:Tweaked. Shows what's in your furnace on a
 monitor, with colored bars for how full each slot is. Long item names scroll sideways
