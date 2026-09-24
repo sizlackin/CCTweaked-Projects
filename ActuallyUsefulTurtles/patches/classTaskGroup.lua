@@ -763,6 +763,51 @@ end
 function TaskGroup:splitArea()
 	local start = self.area.start
 	local finish = self.area.finish
+
+	-- LABENHANCED_PAIRED_MINING
+	-- For exactly two mineArea turtles, split the selected rectangle into
+	-- two long, non-overlapping stripes. This keeps both robots working
+	-- toward the same job without crossing through each other's section.
+	if self.taskName == "mineArea" and self.groupSize == 2 then
+		local minX = math.min(start.x, finish.x)
+		local maxX = math.max(start.x, finish.x)
+		local minY = math.min(start.y, finish.y)
+		local maxY = math.max(start.y, finish.y)
+		local minZ = math.min(start.z, finish.z)
+		local maxZ = math.max(start.z, finish.z)
+
+		local width = maxX - minX + 1
+		local depth = maxZ - minZ + 1
+		local areas = {}
+
+		if width <= depth then
+			-- Z is the long direction: divide the job into west/east stripes.
+			local midX = math.floor((minX + maxX) / 2)
+			areas[1] = {
+				start = vector.new(minX, minY, minZ),
+				finish = vector.new(midX, maxY, maxZ)
+			}
+			areas[2] = {
+				start = vector.new(midX + 1, minY, minZ),
+				finish = vector.new(maxX, maxY, maxZ)
+			}
+		else
+			-- X is the long direction: divide the job into north/south stripes.
+			local midZ = math.floor((minZ + maxZ) / 2)
+			areas[1] = {
+				start = vector.new(minX, minY, minZ),
+				finish = vector.new(maxX, maxY, midZ)
+			}
+			areas[2] = {
+				start = vector.new(minX, minY, midZ + 1),
+				finish = vector.new(maxX, maxY, maxZ)
+			}
+		end
+
+		self:assignAreas(areas)
+		return
+	end
+
 	local rowMargin, levelMargin = 1, 1
 	if self.taskName == "mineArea" then 
 		rowMargin = 2
