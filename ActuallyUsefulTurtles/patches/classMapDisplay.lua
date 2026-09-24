@@ -54,6 +54,7 @@ function MapDisplay:new(x,y,width,height,map)
 	o.refillPreview = nil
 	o.refillSelecting = false
 	o.refillPreviousOnPositionSelected = nil
+	o.displayFloorColors = true -- LABENHANCED_FLOOR_COLORS
 	o.btnRefillUndo = nil
 	o.btnRefillConfirm = nil
 	
@@ -112,6 +113,7 @@ function MapDisplay:initialize()
 	self.btnTurtles = CheckBox:new(1,self.height-2,"turtles",self.displayTurtles,nil,nil,self.backgroundColor)
 	self.btnHome = CheckBox:new(1,self.height-1,"home",self.displayHome,nil,nil,self.backgroundColor)
 	self.btnCircle = CheckBox:new(1,self.height, "128/256 circles",self.displayChunkCircle,nil,nil,self.backgroundColor)
+	self.btnFloorColors = CheckBox:new(1,self.height-4, "floor colors",self.displayFloorColors,nil,nil,self.backgroundColor)
 	self.btnFocusPocket = CheckBox:new(1,self.height-3, "live pos",self.focusPocket,nil,nil,self.backgroundColor)
 
 	self.btnMarkRefilled = Button:new("MARK REFILLED",5,7,15,1,colors.orange)
@@ -157,6 +159,11 @@ function MapDisplay:initialize()
 		self.fullRedraw = true
 		self:redraw()
 	end
+	self.btnFloorColors.click = function()
+		self.displayFloorColors = self.btnFloorColors.active
+		self.fullRedraw = true
+		self:redraw()
+	end
 	self.btnFocusPocket.click = function()
 		self.focusPocket = self.btnFocusPocket.active
 		self:redraw()
@@ -179,6 +186,7 @@ function MapDisplay:initialize()
 	self:addObject(self.btnTurtles)
 	self:addObject(self.btnHome)
 	self:addObject(self.btnCircle)
+	self:addObject(self.btnFloorColors)
 	self:addObject(self.btnMarkRefilled)
 	self:addObject(self.btnClose)
 
@@ -276,6 +284,7 @@ function MapDisplay:onResize()
 	self.btnTurtles:setPos(1,self.height-2)
 	self.btnHome:setPos(1,self.height-1)
 	self.btnCircle:setPos(1,self.height)
+	self.btnFloorColors:setPos(1,self.height-4)
 	self.btnFocusPocket:setPos(1,self.height-3)
 
 	-- Keep MARK REFILLED below the coordinate readout and away from map arrows.
@@ -482,6 +491,28 @@ function MapDisplay:redraw() -- super override
 		local map = self.map
 		local ct = 0
 
+		-- Display-only enhancement: keep air as air in the actual map/pathfinder,
+		-- but optionally color open tunnel cells using the real block directly
+		-- underneath them. This makes remapped tunnels show material colors
+		-- without changing navigation semantics.
+		local function getPixelColor(blockid, wx, wz)
+			local pixelCol = idToBlit[blockid]
+			if self.displayFloorColors and blockid == 0 then
+				local floorId = map:getBlockId(wx, y - 1, wz)
+				if floorId ~= nil and floorId ~= 0 then
+					pixelCol = idToBlit[floorId] or blockedCol
+				end
+			end
+			if not pixelCol then
+				if blockid ~= nil then
+					pixelCol = blockedCol
+				else
+					pixelCol = unknownCol
+				end
+			end
+			return pixelCol
+		end
+
 		local start = os.epoch("utc")
 		
 		local x, y, z, width, height = self.mapX, self.mapY, self.mapZ, drawer.width, drawer.height
@@ -553,15 +584,7 @@ function MapDisplay:redraw() -- super override
 								ct = ct + 1
 								local relativeId = xyzToRelativeChunkId(cx + chunkx, cy, cz + chunkz)
 								local blockid = chunk[relativeId]
-								local pixelCol = idToBlit[blockid]
-
-								if not pixelCol then
-									if blockid then
-										pixelCol = blockedCol
-									else
-										pixelCol = unknownCol
-									end
-								end
+								local pixelCol = getPixelColor(blockid, cx + chunkx, cz + chunkz)
 
 								local rb = (row+trow)*base
 								local rc = (col+tcol)*base
@@ -663,15 +686,7 @@ function MapDisplay:redraw() -- super override
 								ct = ct + 1
 								local relativeId = xyzToRelativeChunkId(cx + chunkx, cy, cz + chunkz)
 								local blockid = chunk[relativeId]
-								local pixelCol = idToBlit[blockid]
-
-								if not pixelCol then
-									if blockid then
-										pixelCol = blockedCol
-									else
-										pixelCol = unknownCol
-									end
-								end
+								local pixelCol = getPixelColor(blockid, cx + chunkx, cz + chunkz)
 								line[col + tcol] = pixelCol
 								tcol = tcol + 1
 							end
