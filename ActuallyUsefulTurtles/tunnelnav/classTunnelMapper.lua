@@ -215,6 +215,7 @@ function Mapper:mapNetwork(radius,maxCells)
 	local startOrientation = m.orientation
 	local mapped = 0
 	local failedFrontiers = 0
+	local noFrontierConfirmations = 0
 	local stopReason = nil
 	local currentTask = m:addCheckTask({"mapTunnelNetwork"})
 
@@ -261,9 +262,24 @@ function Mapper:mapNetwork(radius,maxCells)
 				print("WAITING FOR AN UNCLAIMED FRONTIER")
 				sleep(1)
 			elseif reason == "no_frontier" then
-				stopReason = "all reachable frontiers mapped"
-				print("NO UNMAPPED TUNNEL FRONTIERS REMAIN IN RANGE")
-				break
+				-- Another mapper can briefly consume a frontier before it has
+				-- surveyed the next cell and published the next frontier.
+				-- Require a stable no-work result before declaring completion.
+				if stats and stats.claimedFrontiers and stats.claimedFrontiers > 0 then
+					noFrontierConfirmations = 0
+					print("WAITING FOR OTHER MAPPERS TO EXPOSE NEW FRONTIERS")
+					sleep(1)
+				else
+					noFrontierConfirmations = noFrontierConfirmations + 1
+					if noFrontierConfirmations < 4 then
+						print("CONFIRMING MAP COMPLETE",noFrontierConfirmations.."/4")
+						sleep(1)
+					else
+						stopReason = "all reachable frontiers mapped"
+						print("NO UNMAPPED TUNNEL FRONTIERS REMAIN IN RANGE")
+						break
+					end
+				end
 			else
 				stopReason = "controller link unavailable: "..tostring(reason or "unknown")
 				print("MAPPER PAUSED:",stopReason)
@@ -272,9 +288,10 @@ function Mapper:mapNetwork(radius,maxCells)
 		end
 
 		if not frontier then
-			-- Claimed-work wait path: retry the outer loop.
+			-- Claimed-work/no-work confirmation path: retry the outer loop.
 			sleep(0)
 		else
+		noFrontierConfirmations = 0
 
 		local pathReady = true
 		if frontier.path and #frontier.path > 0 then
