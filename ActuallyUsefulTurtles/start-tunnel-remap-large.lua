@@ -1,6 +1,6 @@
 -- Starts a large non-destructive tunnel remap.
 -- Run on the MAIN Actually Useful Turtles controller.
--- Uses the current remapper's maximum supported radius/cell limits.
+-- Uses the shared tunnel graph mapper for a mine-scale survey.
 -- Prefers DTX-001 / computer ID 12.
 
 if turtle then
@@ -49,8 +49,8 @@ if state and state.task then
 end
 
 print("Starting LARGE non-destructive tunnel remap on turtle "..chosenId)
-print("Radius: 512  Max cells: 10000")
+print("Radius: 1024  Max cells: 50000")
 print("NO BLOCKS WILL BE MINED")
 
-global.node:send(chosenId, {"DO", "remapTunnels", {512,10000}}, false, false)
+global.node:send(chosenId, {"DO", "remapTunnels", {1024,50000}}, false, false)
 print("Large remap command sent.")
