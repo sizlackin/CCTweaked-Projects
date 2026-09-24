@@ -222,14 +222,12 @@ function Mapper:mapNetwork(radius,maxCells)
 	print("radius:",radius,"max new cells:",maxCells)
 	print("NO BLOCKS WILL BE MINED")
 
-	-- LABENHANCED_MAPPER_REFRESH_KNOWN
-	-- The road graph may already know this node while the visual/block map does
-	-- not (for example after a map reset or when floor-colors were enabled
-	-- later). Refresh the occupied cell/floor and discover only directions that
-	-- are still missing/unmapped; surveyCurrent preserves known OPEN edges.
+	-- LABENHANCED_MAPPER_FAST_TRAVEL
+	-- Known road nodes are trusted. Mapping only surveys genuinely new/frontier
+	-- territory; already-explored corridors are traversal-only.
 	local currentNode = nav:requestNode(m.pos)
-	self:surveyCurrent(currentNode)
 	if not currentNode then
+		self:surveyCurrent(nil)
 		mapped = mapped + 1
 	end
 
@@ -244,8 +242,10 @@ function Mapper:mapNetwork(radius,maxCells)
 			if frontier or reason == "no_frontier" then break end
 
 			if reason == "unknown_start" then
-				-- Controller may not have received our newest node yet.
-				self:surveyCurrent(nav:requestNode(m.pos))
+				-- Controller may not have received our newest node yet. Only
+				-- survey if it is still genuinely unknown.
+				local n = nav:requestNode(m.pos)
+				if not n then self:surveyCurrent(nil) end
 			else
 				print("MAPPER LINK RETRY",requestTry,reason or "no response")
 				sleep(0.5)
@@ -265,6 +265,9 @@ function Mapper:mapNetwork(radius,maxCells)
 
 		local pathReady = true
 		if frontier.path and #frontier.path > 0 then
+			if #frontier.path >= 8 then
+				print("FAST TRAVEL",#frontier.path,"known road cells")
+			end
 			for i=1,#frontier.path do
 				local p = frontier.path[i]
 				local target = vector.new(p.x,p.y,p.z)
@@ -295,11 +298,9 @@ function Mapper:mapNetwork(radius,maxCells)
 					break
 				end
 
-				-- Dedicated mapping mode refreshes visual coverage and stale
-				-- edge states while travelling over known roads.
-				local knownNode = nav:requestNode(m.pos)
-				self:surveyCurrent(knownNode)
-				if i % 16 == 0 then sleep(0) end
+				-- Known road: travel only. No inspect/turn/resurvey here.
+				-- This is the Google-Maps-like fast-travel behavior.
+				if i % 32 == 0 then sleep(0) end
 			end
 
 			if pathReady then
@@ -325,7 +326,7 @@ function Mapper:mapNetwork(radius,maxCells)
 			if ok then
 				mapped = mapped + 1
 				-- Successful movement queued the OPEN road edges. Flush them,
-				-- then survey only the newly reached lower road node.
+				-- then survey the newly reached frontier/new road node only.
 				m:flushTunnelUpdatesSync()
 				local reachedNode = nav:requestNode(m.pos)
 				self:surveyCurrent(reachedNode)
