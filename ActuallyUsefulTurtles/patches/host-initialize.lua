@@ -8,7 +8,8 @@ local Monitor = require("classMonitor")
 local HostDisplay = require("classHostDisplay")
 --require("classMap")
 local ChunkyMap = require("classChunkyMap")
-local TunnelMap = require("classTunnelMap") -- LABENHANCED_TUNNEL_NAV
+-- LABENHANCED_TUNNEL_NAV_BOOTSAFE: load TunnelMap later with pcall so a
+-- tunnel-nav module problem can never prevent the base controller from booting.
 local TaskGroup = require("classTaskGroup")
 local RemoteStorage = require("classRemoteStorage")
 local TaskManager = require("classTaskManager")
@@ -70,25 +71,44 @@ end
 -- quick boot
 parallel.waitForAll(initNode,initStream,initUpdate)
 
-
+-- Storage used to be initialized near the end. Keep it available before any
+-- optional subsystem is loaded, so host/main.lua and host/receive.lua can never
+-- crash on global.storage if a later feature fails to initialize.
+initStorage()
 
 initPosition()
 global.map = ChunkyMap:new(false)
 global.map:setMaxChunks(2048) --256 for operational use
 global.map:setLifeTime(-1)
 global.map:load()
-global.tunnelMap = TunnelMap:new({
-	fileName = "runtime/tunnelMap.txt",
-	saveInterval = 5000,
-})
-global.tunnelMap:load()
+
+-- Tunnel navigation is an enhancement, not a boot dependency.
+global.tunnelMap = nil
+local tunnelOk,TunnelMap = pcall(require,"classTunnelMap")
+if tunnelOk and TunnelMap then
+	local createOk,tunnelOrErr = pcall(function()
+		local tm = TunnelMap:new({
+			fileName = "runtime/tunnelMap.txt",
+			saveInterval = 5000,
+		})
+		tm:load()
+		return tm
+	end)
+	if createOk then
+		global.tunnelMap = tunnelOrErr
+		print("tunnel navigation graph ready")
+	else
+		print("TUNNEL NAV DISABLED:",tostring(tunnelOrErr))
+	end
+else
+	print("TUNNEL NAV DISABLED:",tostring(TunnelMap))
+end
+
 global.loadTurtles()
 global.loadStations()
 
 initTaskManager()
 global.loadAlerts()
-
-initStorage() -- init after loading the rest but before display
 
 if not pocket then -- pocket uses shellDisplay
 	global.monitor = Monitor:new()
