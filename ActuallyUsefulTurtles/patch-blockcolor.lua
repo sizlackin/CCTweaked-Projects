@@ -1,5 +1,5 @@
--- Fix Actually Useful Turtles startup crash: "Too long without yielding"
--- Run on the HOST/controller computer, not on a turtle.
+-- Fix Actually Useful Turtles blockColor watchdog timeout.
+-- Run on the HOST/controller computer.
 
 local sourcePath = "general/blockColor.lua"
 if not fs.exists(sourcePath) then
@@ -10,38 +10,43 @@ local f = assert(fs.open(sourcePath, "r"))
 local data = f.readAll()
 f.close()
 
-if data:find("processed %% 8 == 0") then
-    print("blockColor.lua is already patched.")
-else
-    local function replacePlain(text, old, new)
-        local s, e = text:find(old, 1, true)
-        if not s then return nil end
-        return text:sub(1, s - 1) .. new .. text:sub(e + 1)
-    end
+local changed = false
 
-    data = replacePlain(
-        data,
-        "for name, rgb in pairs(nameToRGB) do",
-        "local processed = 0\n\tfor name, rgb in pairs(nameToRGB) do"
-    )
-    if not data then error("Could not find palette loop to patch.", 0) end
-
-    data = replacePlain(
-        data,
-        "idToBlit[nameToId[name]] = blitTab[best]\n\tend\nend\nmapToPalette()",
-        "local id = nameToId[name]\n\t\tif id then idToBlit[id] = blitTab[best] end\n\t\tprocessed = processed + 1\n\t\tif processed % 8 == 0 then sleep(0) end\n\tend\nend\nmapToPalette()"
-    )
-    if not data then error("Could not find palette loop ending to patch.", 0) end
-
-    local out = assert(fs.open(sourcePath, "w"))
-    out.write(data)
-    out.close()
-    print("Patched general/blockColor.lua")
+local oldDist = "local dist = deltaEFromRGB(r, g, b, cr, cg, cb)"
+local newDist = "local dist = deltaE(r, g, b, cr, cg, cb) -- LABENHANCED_BLOCKCOLOR_FIX"
+if data:find(oldDist, 1, true) then
+    data = data:gsub(oldDist, newDist, 1)
+    changed = true
 end
 
-fs.makeDir("runtime")
-if fs.exists("runtime/blockColor.lua") then fs.delete("runtime/blockColor.lua") end
-fs.copy(sourcePath, "runtime/blockColor.lua")
+local oldLine = "idToBlit[nameToId[name]] = blitTab[best]"
+local replacement = "local id = nameToId[name]\n\t\tif id then idToBlit[id] = blitTab[best] end\n\t\tsleep(0) -- LABENHANCED_BLOCKCOLOR_YIELD"
+if not data:find("LABENHANCED_BLOCKCOLOR_YIELD", 1, true) then
+    if data:find(oldLine, 1, true) then
+        data = data:gsub(oldLine, replacement, 1)
+        changed = true
+    else
+        local oldGuard = "if id then idToBlit[id] = blitTab[best] end"
+        if data:find(oldGuard, 1, true) then
+            data = data:gsub(oldGuard, oldGuard .. "\n\t\tsleep(0) -- LABENHANCED_BLOCKCOLOR_YIELD", 1)
+            changed = true
+        end
+    end
+end
 
-print("Patched runtime/blockColor.lua")
-print("Reboot the HOST, wait for dashboard, then reboot each turtle.")
+if not data:find("LABENHANCED_BLOCKCOLOR_YIELD", 1, true) then
+    error("Could not add watchdog yield to host blockColor.lua.", 0)
+end
+
+local out = assert(fs.open(sourcePath, "w"))
+out.write(data)
+out.close()
+
+fs.makeDir("runtime")
+local runtimePath = "runtime/blockColor.lua"
+local out2 = assert(fs.open(runtimePath, "w"))
+out2.write(data)
+out2.close()
+
+print(changed and "Patched host blockColor source/runtime." or "Host blockColor already fully patched.")
+print("Reboot HOST, then reboot turtles.")
