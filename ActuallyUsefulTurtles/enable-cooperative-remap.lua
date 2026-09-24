@@ -27,6 +27,11 @@ local files = {
     targets={"turtle/classTunnelMapper.lua"},
   },
   {
+    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/a002774f9464b8a972500ef29282be560d9702f9/ActuallyUsefulTurtles/patches/turtle-receive.lua",
+    marker="LABENHANCED_STOP_LATCH_FIX",
+    targets={"turtle/receive.lua"},
+  },
+  {
     url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/start-tunnel-remap-all.lua",
     marker="COOPERATIVE TUNNEL REMAP",
     targets={"start-tunnel-remap-all"},
