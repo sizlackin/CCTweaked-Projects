@@ -1979,14 +1979,13 @@ local blitTab = {
 local function mapToPalette(t)
 	print("mapping")
 	local palette = getColorPalette(t)
-	local processed = 0
 	for name, rgb in pairs(nameToRGB) do
 		local r, g, b = unpackRGB(rgb)
 		local best = 0
 		local bestDist = math.huge
 		for c, hex in pairs(palette) do
 			local cr, cg, cb = unpackRGB(hex)
-			local dist = deltaEFromRGB(r, g, b, cr, cg, cb)
+			local dist = deltaE(r, g, b, cr, cg, cb) -- LABENHANCED_BLOCKCOLOR_FIX
 			if dist < bestDist then
 				bestDist = dist
 				best = c
@@ -1994,15 +1993,8 @@ local function mapToPalette(t)
 		end
 		nameToBlit[name] = blitTab[best]
 		local id = nameToId[name]
-		if id then
-			idToBlit[id] = blitTab[best]
-		end
-		processed = processed + 1
-		-- CC:Tweaked aborts programs which run too long without yielding.
-		-- Palette generation is CPU-heavy, so periodically yield to the scheduler.
-		if processed % 8 == 0 then
-			sleep(0)
-		end
+		if id then idToBlit[id] = blitTab[best] end
+		sleep(0) -- LABENHANCED_BLOCKCOLOR_YIELD
 	end
 end
 mapToPalette()
