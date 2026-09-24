@@ -49,8 +49,8 @@ if state and state.task then
 end
 
 print("Starting LARGE non-destructive tunnel remap on turtle "..chosenId)
-print("Radius: 1024  Max cells: 50000")
+print("Radius: 2048  Max cells: 100000")
 print("NO BLOCKS WILL BE MINED")
 
-global.node:send(chosenId, {"DO", "remapTunnels", {1024,50000}}, false, false)
+global.node:send(chosenId, {"DO", "remapTunnels", {2048,100000}}, false, false)
 print("Large remap command sent.")
