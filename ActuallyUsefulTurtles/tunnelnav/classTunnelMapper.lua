@@ -19,10 +19,11 @@ local function posTable(p)
 end
 
 local function isTunnelDecoration(name)
-	return name == "minecraft:torch"
-		or name == "minecraft:wall_torch"
-		or name == "minecraft:soul_torch"
-		or name == "minecraft:soul_wall_torch"
+	-- LABENHANCED_TORCH_BYPASS_V2
+	-- Any registry id ending in "torch" is treated as tunnel decoration.
+	-- This covers vanilla wall/soul torches and modded torch variants.
+	return type(name) == "string"
+		and string.match(string.lower(name), ":.*torch$") ~= nil
 end
 
 local orientForDir = {
@@ -70,30 +71,32 @@ function Mapper:surveyCurrent(existingNode)
 	local verticalTransit = (not hasDown) and (upKnown or downKnown)
 
 	-- Horizontal road candidates.
+	-- During an explicit mapping job we physically revalidate every direction,
+	-- including old BLOCKED edges. This repairs stale graph entries caused by
+	-- torches being mistaken for tunnel walls in older mapper versions.
 	if not verticalTransit then
 	for _,entry in ipairs(horizontal) do
 		local conn = known and known[entry.name]
 		local state = conn and conn.state
-		if state == nil or state == TunnelMap.STATE.UNMAPPED
-		or state == TunnelMap.STATE.TEMPORARILY_BLOCKED then
-			m:turnTo(entry.orient)
-			local hasBlock,data = turtle.inspect()
-			local target = TunnelMap.target(pos,entry.name)
-			if hasBlock then
-				local name = data and data.name or "unknown:block"
-				m:setMapValue(target.x,target.y,target.z,name)
-				if isTunnelDecoration(name) then
-					-- LABENHANCED_TORCH_BYPASS
-					-- Keep the frontier discoverable. The mapper will go over
-					-- the torch through the upper half of the 2-high tunnel.
-					self:_queue(pos,entry.name,TunnelMap.STATE.UNMAPPED)
-				else
-					self:_queue(pos,entry.name,TunnelMap.STATE.BLOCKED)
-				end
-			else
-				-- Adjacent air is only a FRONTIER until the turtle actually
-				-- traverses it. This avoids treating arbitrary observed air as
-				-- a verified road node.
+		m:turnTo(entry.orient)
+		local hasBlock,data = turtle.inspect()
+		local target = TunnelMap.target(pos,entry.name)
+
+		if hasBlock then
+			local name = data and data.name or "unknown:block"
+			m:setMapValue(target.x,target.y,target.z,name)
+			if isTunnelDecoration(name) then
+				-- Keep this as an explorable frontier. The mapper preserves the
+				-- torch and takes the existing upper half of the 2-high tunnel.
+				self:_queue(pos,entry.name,TunnelMap.STATE.UNMAPPED)
+			elseif state ~= TunnelMap.STATE.BLOCKED then
+				self:_queue(pos,entry.name,TunnelMap.STATE.BLOCKED)
+			end
+		else
+			-- If this road was previously confirmed OPEN, keep it OPEN.
+			-- Otherwise mark it as a frontier; TunnelMap automatically promotes
+			-- it to OPEN when the adjacent coordinate is already a known node.
+			if state ~= TunnelMap.STATE.OPEN then
 				self:_queue(pos,entry.name,TunnelMap.STATE.UNMAPPED)
 			end
 		end
@@ -209,6 +212,7 @@ function Mapper:mapNetwork(radius,maxCells)
 	local startOrientation = m.orientation
 	local mapped = 0
 	local failedFrontiers = 0
+	local stopReason = nil
 	local currentTask = m:addCheckTask({"mapTunnelNetwork"})
 
 	print("SHARED TUNNEL NETWORK MAPPER")
@@ -231,46 +235,79 @@ function Mapper:mapNetwork(radius,maxCells)
 		local pulse = m:addCheckTask({"mapTunnelNetworkStep"})
 		m.taskList:remove(pulse)
 
-		local frontier,reason,stats = nav:requestNearestFrontier(startPos,radius)
+		local frontier,reason,stats
+		for requestTry=1,8 do
+			frontier,reason,stats = nav:requestNearestFrontier(startPos,radius)
+			if frontier or reason == "no_frontier" then break end
+
+			if reason == "unknown_start" then
+				-- Controller may not have received our newest node yet.
+				self:surveyCurrent(nav:requestNode(m.pos))
+			else
+				print("MAPPER LINK RETRY",requestTry,reason or "no response")
+				sleep(0.5)
+			end
+		end
+
 		if not frontier then
 			if reason == "no_frontier" then
+				stopReason = "all reachable frontiers mapped"
 				print("NO UNMAPPED TUNNEL FRONTIERS REMAIN IN RANGE")
 			else
-				print("MAPPER STOPPED:",reason or "unknown")
+				stopReason = "controller link unavailable: "..tostring(reason or "unknown")
+				print("MAPPER PAUSED:",stopReason)
 			end
 			break
 		end
 
+		local pathReady = true
 		if frontier.path and #frontier.path > 0 then
-			local ok = true
 			for i=1,#frontier.path do
 				local p = frontier.path[i]
-				if not nav:moveAdjacent(vector.new(p.x,p.y,p.z)) then
-					ok = false
+				local target = vector.new(p.x,p.y,p.z)
+				local from = vector.new(m.pos.x,m.pos.y,m.pos.z)
+				local pathDir = TunnelMap.directionBetween(from,target)
+				local ok,moveReason,blockName = nav:moveAdjacent(target)
+
+				if not ok and moveReason == "decoration" and pathDir then
+					ok = self:bypassDecoration({dir=pathDir},blockName)
+					if ok then
+						-- The upper bypass can land several cells beyond this
+						-- stale route step. Ask the controller for a fresh route
+						-- on the next outer iteration instead of following the
+						-- remainder of the old path.
+						pathReady = false
+						failedFrontiers = 0
+						break
+					end
+				end
+
+				if not ok then
+					pathReady = false
+					failedFrontiers = failedFrontiers + 1
+					if failedFrontiers % 8 == 0 then
+						print("route changed/blocked",failedFrontiers,
+							"times - continuing to reroute")
+					end
 					break
 				end
 
-				-- Dedicated mapping mode should refresh visual coverage while
-				-- travelling over known roads. This does NOT dig and does not
-				-- re-explore already-known OPEN connections.
+				-- Dedicated mapping mode refreshes visual coverage and stale
+				-- edge states while travelling over known roads.
 				local knownNode = nav:requestNode(m.pos)
 				self:surveyCurrent(knownNode)
 				if i % 16 == 0 then sleep(0) end
 			end
 
-			if not ok then
-				failedFrontiers = failedFrontiers + 1
-				if failedFrontiers > 32 then
-					print("TOO MANY BLOCKED FRONTIERS - STOPPING SAFELY")
-					break
-				end
-				sleep(0)
-			else
+			if pathReady then
 				failedFrontiers = 0
+			else
+				sleep(0)
 			end
 		end
 
-		if m.pos.x == frontier.source.x
+		if pathReady
+		and m.pos.x == frontier.source.x
 		and m.pos.y == frontier.source.y
 		and m.pos.z == frontier.source.z then
 			local target = vector.new(frontier.target.x,frontier.target.y,frontier.target.z)
@@ -308,8 +345,14 @@ function Mapper:mapNetwork(radius,maxCells)
 		sleep(0)
 	end
 
+	if mapped >= maxCells then
+		stopReason = "maximum new-cell limit reached"
+		print("MAPPER CELL LIMIT REACHED:",maxCells)
+	end
+
 	m:flushTunnelUpdatesSync()
 
+	print("MAPPING STOP REASON:",stopReason or "mapping loop completed")
 	print("MAPPING COMPLETE - RETURNING THROUGH ROAD NETWORK")
 	local returned = nav:navigateTo(startPos,{maxReroutes=32})
 	if returned then
