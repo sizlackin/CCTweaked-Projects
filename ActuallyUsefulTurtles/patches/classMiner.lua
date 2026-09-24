@@ -2645,15 +2645,17 @@ function Miner:displaceLavaAhead()
 	return true
 end
 
-function Miner:sealLavaAtCurrentLayer(includeFloorCeiling)
+function Miner:sealLavaAtCurrentLayer(verticalBoundary)
 	local startOrientation = self.orientation
 
-	if includeFloorCeiling then
+	-- The lower tunnel cell owns the floor; the upper tunnel cell owns the
+	-- ceiling. Never fill the open cell between the two tunnel levels.
+	if verticalBoundary == "floor" then
 		local below = self:inspectDown(true)
 		if below == "minecraft:lava" then
 			self:placeTunnelMaterial("down")
 		end
-
+	elseif verticalBoundary == "ceiling" then
 		local above = self:inspectUp(true)
 		if above == "minecraft:lava" then
 			self:placeTunnelMaterial("up")
@@ -2674,22 +2676,33 @@ end
 function Miner:maintainLavaTunnel()
 	local startOrientation = self.orientation
 
-	-- Lower half: side walls + floor.
-	self:sealLavaAtCurrentLayer(true)
+	-- Lower half: side walls + floor, while keeping the upper interior open.
+	self:sealLavaAtCurrentLayer("floor")
 
-	-- Ensure the upper interior cell itself is open. If it is lava, temporarily
-	-- replace the source with cobbled deepslate and dig it back out.
+	-- If the upper interior cell is itself a lava source, replace it briefly
+	-- with cobbled deepslate, then dig that block back out to create air.
 	local above = self:inspectUp(true)
 	if above == "minecraft:lava" then
 		local ok = self:placeTunnelMaterial("up")
 		if ok then self:digUp() end
 	end
 
-	-- Temporarily occupy the upper tunnel cell so we can seal its side walls
-	-- and ceiling against lava as well.
-	if self:up() then
-		self:sealLavaAtCurrentLayer(true)
-		if not self:down() then
+	-- Temporarily move into the upper tunnel cell WITHOUT calling checkStatus().
+	-- This lets us seal the upper side walls and ceiling without triggering
+	-- refuel/offload logic halfway through tunnel maintenance.
+	local oldPos = vector.new(self.pos.x,self.pos.y,self.pos.z)
+	if turtle.up() then
+		self:setMapValue(oldPos.x,oldPos.y,oldPos.z,0)
+		self.pos.y = self.pos.y + 1
+		self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+
+		self:sealLavaAtCurrentLayer("ceiling")
+
+		if turtle.down() then
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+			self.pos.y = self.pos.y - 1
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+		else
 			print("WARNING: COULD NOT RETURN TO LOWER TUNNEL CELL")
 		end
 	end
