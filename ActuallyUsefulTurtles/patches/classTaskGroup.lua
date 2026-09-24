@@ -417,24 +417,45 @@ function TaskGroup:createTask(turtleId)
 end
 
 function TaskGroup:addTaskToTurtles(funcName, args)
-	-- basic assign and execute function e.g. to call them home
-	-- perhaps replace with proper  call home logic from taskmanager
-	-- do not add the tasks to the list of tasks for this group, as they are not part of the main task
+	-- Utility actions from Task > Options are NOT part of the mining group's
+	-- normal assignment list. In particular, "call home" must interrupt the
+	-- current mining task instead of sitting behind it in the turtle queue.
 	local count, assignedTurtles = self:getAssignedTurtles()
-	print("new task", funcName, "for", count, "turtles", #assignedTurtles)
+	print("new utility task", funcName, "for", count, "turtles", #assignedTurtles)
+
 	for _,turtle in ipairs(assignedTurtles) do
-		print("new task", funcName, "for turtle", turtle.state.id)
-		local task = self:createTask(turtle.state.id)
-		task:setFunctionArguments(args)
-		task:setFunction(funcName)
-		print("new task", funcName, "for turtle", turtle.state.id)
-		task.onCompleted = function()
-			task:delete()
+		local turtleId = turtle.state.id
+
+		if funcName == "returnHome" then
+			-- LABENHANCED_IMMEDIATE_GROUP_HOME
+			-- Gracefully cancel the active assignment first. The turtle captures
+			-- its checkpoint, sets miner.stop, then the returnHome task becomes
+			-- the next task to execute. This keeps Resume available afterward.
+			local current = self.taskManager:getCurrentTurtleTask(turtleId)
+			if current and current.funcName ~= "returnHome"
+			and current.status ~= "completed" and current.status ~= "deleted"
+			and current.status ~= "cancelled" then
+				print("pausing current task for turtle", turtleId, "before returnHome")
+				local ok = self.taskManager:cancelTask(current)
+				if not ok then
+					print("WARNING: could not pause current task for turtle", turtleId)
+				end
+			end
 		end
-		task:start()
+
+		-- Use TaskManager's utility-task path so this temporary command is not
+		-- inserted into self.tasks and does not corrupt the mining group.
+		local task = self.taskManager:addTaskToTurtle(turtleId, funcName, args or {})
+		if task then
+			print("queued utility task", funcName, "for turtle", turtleId)
+			task.onCompleted = function()
+				task:delete()
+			end
+		else
+			print("failed to queue utility task", funcName, "for turtle", turtleId)
+		end
 	end
 end
-
 
 function TaskGroup:assignAreas(areas)
 	-- assign the splitted areas to available turtles
