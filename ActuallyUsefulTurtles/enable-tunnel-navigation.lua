@@ -5,22 +5,22 @@ if turtle then error("Run this on the main controller, not a turtle.",0) end
 
 local files = {
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/20ad969bff6afc614564f64beaa8ec72100af600/ActuallyUsefulTurtles/tunnelnav/classTunnelMap.lua",
-		marker="Controller is authoritative",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/75b62d6ce1695cf646367da8de428d4205b7f2cd/ActuallyUsefulTurtles/tunnelnav/classTunnelMap.lua",
+		marker="blockedUntil",
 		targets={"general/classTunnelMap.lua","runtime/classTunnelMap.lua"},
 	},
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/77fefe46e8fa5084f90d4c2ee52e54dc6e4cdd47/ActuallyUsefulTurtles/tunnelnav/classTunnelNavigator.lua",
-		marker="LABENHANCED_TORCH_BYPASS",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/8da94efead9dc9c4dd956b4d5cb291b2cbf39ace/ActuallyUsefulTurtles/tunnelnav/classTunnelNavigator.lua",
+		marker="LABENHANCED_TORCH_BYPASS_V2",
 		targets={"turtle/classTunnelNavigator.lua"},
 	},
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/ac30e839f5f13c30262780f61a8495d2c5cf769d/ActuallyUsefulTurtles/tunnelnav/classTunnelMapper.lua",
-		marker="LABENHANCED_TORCH_BYPASS",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/f677c763003753fb830262c62065a0d3106bd0c7/ActuallyUsefulTurtles/tunnelnav/classTunnelMapper.lua",
+		marker="MAPPING STOP REASON",
 		targets={"turtle/classTunnelMapper.lua"},
 	},
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/fb6719dfa8b31ae44a3b780e59088d4948339cb4/ActuallyUsefulTurtles/patches/classMiner.lua",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/ea3b1e6c34f0a7c5c7dbe99fe6401e1d230d6169/ActuallyUsefulTurtles/patches/classMiner.lua",
 		marker="LABENHANCED_TUNNEL_NAV",
 		targets={"turtle/classMiner.lua"},
 	},
