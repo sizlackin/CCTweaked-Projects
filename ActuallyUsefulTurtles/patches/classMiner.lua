@@ -1991,6 +1991,9 @@ function Miner:navigateOpenPathToPos(x,y,z)
 
 	if self.pos == goal then
 		result = true
+	elseif self:getMapValue(goal.x,goal.y,goal.z) ~= 0 then
+		print("OPEN PATH GOAL NOT KNOWN OPEN - REFUSING TO DIG")
+		result = false
 	else
 		self.map:setMaxChunks(800)
 		for attempt=1,3 do
