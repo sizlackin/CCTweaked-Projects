@@ -123,9 +123,9 @@ function TunnelMap:getConnection(nodeOrPos,dir)
 	if not node then return nil end
 	local conn = node.connections[dir]
 	if conn and conn.state == TunnelMap.STATE.TEMPORARILY_BLOCKED
-	and conn.until and conn.until <= now() then
+	and conn.blockedUntil and conn.blockedUntil <= now() then
 		conn.state = conn.resume or TunnelMap.STATE.OPEN
-		conn.until = nil
+		conn.blockedUntil = nil
 		conn.resume = nil
 		self.dirty = true
 	end
@@ -137,7 +137,7 @@ function TunnelMap:getConnectionState(nodeOrPos,dir)
 	return c and c.state or nil
 end
 
-function TunnelMap:_applyOne(pos,dir,state,seen,until,resume)
+function TunnelMap:_applyOne(pos,dir,state,seen,blockedUntil,resume)
 	local d = TunnelMap.DIRS[dir]
 	if not d then return false end
 	seen = seen or now()
@@ -156,13 +156,13 @@ function TunnelMap:_applyOne(pos,dir,state,seen,until,resume)
 
 	local changed = not old
 		or old.state ~= state
-		or old.until ~= until
+		or old.blockedUntil ~= blockedUntil
 		or old.resume ~= resume
 
 	node.connections[dir] = {
 		state=state,
 		seen=seen,
-		until=until,
+		blockedUntil=blockedUntil,
 		resume=resume,
 	}
 	node.lastSeen = math.max(node.lastSeen or 0,seen)
@@ -186,7 +186,7 @@ function TunnelMap:_applyOne(pos,dir,state,seen,until,resume)
 			if not otherOld or not otherOld.seen or seen >= otherOld.seen then
 				other.connections[opp] = {
 					state=TunnelMap.STATE.TEMPORARILY_BLOCKED,
-					seen=seen,until=until,resume=resume or TunnelMap.STATE.OPEN
+					seen=seen,blockedUntil=blockedUntil,resume=resume or TunnelMap.STATE.OPEN
 				}
 				changed = true
 			end
@@ -217,7 +217,7 @@ function TunnelMap:applyUpdates(updates)
 	for _,u in ipairs(updates) do
 		local p = u.pos or u.position or u.from
 		if p and u.dir and u.state then
-			if self:_applyOne(p,u.dir,u.state,u.seen,u.until,u.resume) then
+			if self:_applyOne(p,u.dir,u.state,u.seen,u.blockedUntil,u.resume) then
 				changed = changed + 1
 			end
 		end
@@ -232,7 +232,7 @@ function TunnelMap:makeUpdate(pos,dir,state,opts)
 		dir=dir,
 		state=state,
 		seen=opts.seen or now(),
-		until=opts.until,
+		blockedUntil=opts.blockedUntil,
 		resume=opts.resume,
 	}
 end
