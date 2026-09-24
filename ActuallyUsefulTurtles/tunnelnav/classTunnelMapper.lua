@@ -18,6 +18,17 @@ local function posTable(p)
 	return {x=p.x,y=p.y,z=p.z}
 end
 
+local function isTunnelDecoration(name)
+	return name == "minecraft:torch"
+		or name == "minecraft:wall_torch"
+		or name == "minecraft:soul_torch"
+		or name == "minecraft:soul_wall_torch"
+end
+
+local orientForDir = {
+	north=2,south=0,west=1,east=3,
+}
+
 function Mapper:new(miner,navigator)
 	local o = {
 		miner=miner,
@@ -69,8 +80,16 @@ function Mapper:surveyCurrent(existingNode)
 			local hasBlock,data = turtle.inspect()
 			local target = TunnelMap.target(pos,entry.name)
 			if hasBlock then
-				m:setMapValue(target.x,target.y,target.z,data and data.name or "unknown:block")
-				self:_queue(pos,entry.name,TunnelMap.STATE.BLOCKED)
+				local name = data and data.name or "unknown:block"
+				m:setMapValue(target.x,target.y,target.z,name)
+				if isTunnelDecoration(name) then
+					-- LABENHANCED_TORCH_BYPASS
+					-- Keep the frontier discoverable. The mapper will go over
+					-- the torch through the upper half of the 2-high tunnel.
+					self:_queue(pos,entry.name,TunnelMap.STATE.UNMAPPED)
+				else
+					self:_queue(pos,entry.name,TunnelMap.STATE.BLOCKED)
+				end
 			else
 				-- Adjacent air is only a FRONTIER until the turtle actually
 				-- traverses it. This avoids treating arbitrary observed air as
@@ -113,6 +132,70 @@ function Mapper:surveyCurrent(existingNode)
 	m:turnTo(originalOrientation)
 	return m:flushTunnelUpdatesSync()
 end
+
+-- Preserve floor/wall torches without treating them as dead ends.
+-- In a normal 2-high tunnel the turtle can climb into the upper cell, pass
+-- above one or more lower-cell torches, then descend once lower air resumes.
+-- No block is broken or placed.
+function Mapper:bypassDecoration(frontier,blockName)
+	if not frontier or not orientForDir[frontier.dir]
+	or not isTunnelDecoration(blockName) then
+		return false
+	end
+
+	local m = self.miner
+	local source = vector.new(m.pos.x,m.pos.y,m.pos.z)
+	local originalOrientation = m.orientation
+	local orient = orientForDir[frontier.dir]
+	local travelled = 0
+
+	print("TORCH IN TUNNEL - USING UPPER BYPASS")
+
+	-- Direct lower edge really is unavailable while the torch remains, so keep
+	-- that edge blocked. The upper detour becomes the valid shared road.
+	self:_queue(source,frontier.dir,TunnelMap.STATE.BLOCKED)
+	m:flushTunnelUpdatesSync()
+
+	if not m:up() then
+		m:turnTo(originalOrientation)
+		return false
+	end
+
+	m:turnTo(orient)
+	for i=1,8 do
+		if not m:forward() then
+			for j=1,travelled do m:back() end
+			m:down()
+			m:turnTo(originalOrientation)
+			return false
+		end
+		travelled = travelled + 1
+
+		local hasDown,dataDown = turtle.inspectDown()
+		if not hasDown then
+			if m:down() then
+				m:turnTo(originalOrientation)
+				m:flushTunnelUpdatesSync()
+				return true
+			end
+		else
+			local name = dataDown and dataDown.name or nil
+			if not isTunnelDecoration(name) then
+				for j=1,travelled do m:back() end
+				m:down()
+				m:turnTo(originalOrientation)
+				return false
+			end
+			-- Still above another torch: continue through upper tunnel space.
+		end
+	end
+
+	for j=1,travelled do m:back() end
+	m:down()
+	m:turnTo(originalOrientation)
+	return false
+end
+
 
 function Mapper:mapNetwork(radius,maxCells)
 	radius = tonumber(radius) or 512
@@ -172,11 +255,18 @@ function Mapper:mapNetwork(radius,maxCells)
 		and m.pos.y == frontier.source.y
 		and m.pos.z == frontier.source.z then
 			local target = vector.new(frontier.target.x,frontier.target.y,frontier.target.z)
-			local ok = nav:moveAdjacent(target)
+			local ok,moveReason,blockName = nav:moveAdjacent(target)
+
+			-- A lower-cell torch is decoration, not the end of a tunnel. Preserve
+			-- it and take the upper half of the existing 2-high tunnel around it.
+			if not ok and moveReason == "decoration" then
+				ok = self:bypassDecoration(frontier,blockName)
+			end
+
 			if ok then
 				mapped = mapped + 1
-				-- Successful movement queued the OPEN edge. Flush it, then
-				-- survey only this newly reached node.
+				-- Successful movement queued the OPEN road edges. Flush them,
+				-- then survey only the newly reached lower road node.
 				m:flushTunnelUpdatesSync()
 				local reachedNode = nav:requestNode(m.pos)
 				self:surveyCurrent(reachedNode)
