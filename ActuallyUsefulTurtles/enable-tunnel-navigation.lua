@@ -5,18 +5,18 @@ if turtle then error("Run this on the main controller, not a turtle.",0) end
 
 local files = {
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/75b62d6ce1695cf646367da8de428d4205b7f2cd/ActuallyUsefulTurtles/tunnelnav/classTunnelMap.lua",
-		marker="blockedUntil",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/699e11283b6eeb18e0a5984096964cc3c5ba9e93/ActuallyUsefulTurtles/tunnelnav/classTunnelMap.lua",
+		marker="LABENHANCED_MULTI_MAPPER_CLAIMS",
 		targets={"general/classTunnelMap.lua","runtime/classTunnelMap.lua"},
 	},
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/8da94efead9dc9c4dd956b4d5cb291b2cbf39ace/ActuallyUsefulTurtles/tunnelnav/classTunnelNavigator.lua",
-		marker="LABENHANCED_TORCH_BYPASS_V2",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/da657c4ce1cc6efd94baa725972b7e095e04ace4/ActuallyUsefulTurtles/tunnelnav/classTunnelNavigator.lua",
+		marker="LABENHANCED_MULTI_MAPPER_CLAIMS",
 		targets={"turtle/classTunnelNavigator.lua"},
 	},
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/f677c763003753fb830262c62065a0d3106bd0c7/ActuallyUsefulTurtles/tunnelnav/classTunnelMapper.lua",
-		marker="MAPPING STOP REASON",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/ffe35ca50e3997684008176c0db1ea5031ceb95a/ActuallyUsefulTurtles/tunnelnav/classTunnelMapper.lua",
+		marker="LABENHANCED_MULTI_MAPPER_CLAIMS",
 		targets={"turtle/classTunnelMapper.lua"},
 	},
 	{
@@ -40,7 +40,7 @@ local files = {
 		targets={"host/initialize.lua","runtime/initialize.lua"},
 	},
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/4f745b8ec079958229b79e6fd790d0854344330d/ActuallyUsefulTurtles/patches/host-main.lua",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/429cd4296a00b5e804328344985984ed1526c516/ActuallyUsefulTurtles/patches/host-main.lua",
 		marker="LABENHANCED_TUNNEL_NAV_BOOTSAFE",
 		targets={"host/main.lua","runtime/main.lua"},
 	},
