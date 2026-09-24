@@ -16,8 +16,9 @@ for _,path in ipairs(targets) do
   end
 end
 
--- Recreate the expected parent folder.
+-- Recreate the folders expected by classChunkyMap before the next boot.
 if not fs.exists("runtime/map") then fs.makeDir("runtime/map") end
+if not fs.exists("runtime/map/multichunks") then fs.makeDir("runtime/map/multichunks") end
 
 if isTurtle then
   print("Map cleared. Shutting turtle down to keep it clean.")
@@ -26,6 +27,5 @@ if isTurtle then
   os.shutdown()
 else
   print("Controller map cleared. Rebooting now.")
-  sleep(1)
   os.reboot()
 end
