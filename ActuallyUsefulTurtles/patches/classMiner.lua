@@ -199,7 +199,7 @@ function Miner:new()
 	setmetatable(o,self)
 
 	print("----INITIALIZING----")
-	print("LabEnhanced miner: clean-return + lava + philolite repair v3")
+	print("LabEnhanced miner: contained tunnels + clean return + lava + philolite v4")
 	assert(turtle,"this device is not a turtle")
 	
 	o.fuelLimit = turtle.getFuelLimit()
@@ -228,6 +228,7 @@ function Miner:new()
 	o.activeTunnelOrientation = nil
 	o.philoliteRepairCells = nil
 	o.philoliteRepairPending = false
+	o.activeMiningBounds = nil
 	
 	o:initialize() -- initialize after starting parallel tasks in startup.lua
 	--print("--------------------")
@@ -1461,6 +1462,10 @@ function Miner:dig(side)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	self:updateLookingAt()
 	local target = vector.new(self.lookingAt.x,self.lookingAt.y,self.lookingAt.z)
+	if self.activeMiningBounds and not self:isInsideActiveMiningBounds(target) then
+		print("MINING BOUNDARY - REFUSING TO DIG OUTSIDE JOB")
+		return false
+	end
 	local blockBefore = self:getMapValue(target.x,target.y,target.z)
 	if blockBefore == philoliteBlockName then
 		self:preparePhiloliteBlastRepair(target)
@@ -1483,6 +1488,10 @@ end
 function Miner:digUp(side)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local target = vector.new(self.pos.x,self.pos.y+1,self.pos.z)
+	if self.activeMiningBounds and not self:isInsideActiveMiningBounds(target) then
+		print("MINING BOUNDARY - REFUSING TO DIG OUTSIDE JOB")
+		return false
+	end
 	local blockBefore = self:getMapValue(target.x,target.y,target.z)
 	if blockBefore == philoliteBlockName then
 		self:preparePhiloliteBlastRepair(target)
@@ -1505,6 +1514,10 @@ end
 function Miner:digDown(side)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local target = vector.new(self.pos.x,self.pos.y-1,self.pos.z)
+	if self.activeMiningBounds and not self:isInsideActiveMiningBounds(target) then
+		print("MINING BOUNDARY - REFUSING TO DIG OUTSIDE JOB")
+		return false
+	end
 	local blockBefore = self:getMapValue(target.x,target.y,target.z)
 	if blockBefore == philoliteBlockName then
 		self:preparePhiloliteBlastRepair(target)
@@ -2052,93 +2065,122 @@ function Miner:navigateOpenPathToPos(x,y,z)
 end
 
 
-function Miner:mineVein() 
-	--ore in front? dig, move, inspect
-	--ore left? turnleft, dig, move, inspect
-	--ore right? turnright, dig, move, inspect
-	--ore behind? turnright, turnright, dig, move, inspect
-	--ore up? digup, moveup, inspect
-	--ore down? digdown, movedown, inspect
-	--ore somewhere on map? check last seen ores via list
-		--dig towards nearest or last seen ore (last seen = nearest?)
-		-- inspect
-	--no ores: exit
-	--else repeat
-	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
-	
-	-- TODO: give turtle a bucket and gobble up lava to refuel
+-- LABENHANCED_CONTAINED_MINING
+-- mineArea is constrained to its assigned X/Z rectangle. Y is intentionally
+-- not constrained because the normal tunnel is two blocks tall and multi-level
+-- jobs legitimately move vertically.
+function Miner:setActiveMiningBounds(startPos, finishPos)
+	if not startPos or not finishPos then
+		self.activeMiningBounds = nil
+		return
+	end
+	self.activeMiningBounds = {
+		minX = math.min(startPos.x,finishPos.x),
+		maxX = math.max(startPos.x,finishPos.x),
+		minZ = math.min(startPos.z,finishPos.z),
+		maxZ = math.max(startPos.z,finishPos.z),
+	}
+end
 
-	local startPos = vector.new(self.pos.x, self.pos.y, self.pos.z)
-	local startOrientation = self.orientation
-	self.veinTrace = { vector.new(startPos.x,startPos.y,startPos.z) }
-	self.veinExcavated = {}
-	self.veinRecording = true
-	local block
-	local ct = 0
-	local isInVein = false
-	
-	repeat
-	
-	self:inspectAll()
-	--in front
-	block = self.pos + self.vectors[self.orientation]
-	if checkOreBlock(self:getMapValue(block.x, block.y, block.z)) then
-		self:digMove()
-		isInVein = true
-	else -- left
-		block = self.pos + self.vectors[(self.orientation-1)%4]
-		if checkOreBlock(self:getMapValue(block.x, block.y, block.z)) then
-			self:turnLeft()
-			self:digMove()
-			isInVein = true
-		else -- right
-			block = self.pos + self.vectors[(self.orientation+1)%4]
-			if checkOreBlock(self:getMapValue(block.x, block.y, block.z)) then
-				self:turnRight()
-				self:digMove()
-				isInVein = true
-			else -- behind
-				block = self.pos + self.vectors[(self.orientation+2)%4]
-				if checkOreBlock(self:getMapValue(block.x, block.y, block.z)) then
-					self:turnRight()
-					self:turnRight()
-					self:digMove()
-					isInVein = true
-				else -- up
-					if checkOreBlock(self:getMapValue(self.pos.x, self.pos.y+1, self.pos.z)) then
-						self:digMoveUp()
-						isInVein = true
-					else -- down
-						if checkOreBlock(self:getMapValue(self.pos.x, self.pos.y-1, self.pos.z)) then
-							self:digMoveDown()
-							isInVein = true
-						else -- nearest ore, if ore has been found before
-							if isInVein then
-								local nextOre = self.map:findNextBlock(self.pos, 
-									checkOreBlock
-									,default.maxVeinRadius)
-								if nextOre then
-									self:digToPos(nextOre.x, nextOre.y, nextOre.z)
-								else
-									-- done
-									break
-								end
-							else
-								-- do not look if none has been found before
-								break
-							end
-						end
-					end
-				end
-			end
+function Miner:isInsideActiveMiningBounds(pos)
+	local b = self.activeMiningBounds
+	if not b or not pos then return true end
+	return pos.x >= b.minX and pos.x <= b.maxX
+		and pos.z >= b.minZ and pos.z <= b.maxZ
+end
+
+function Miner:mineExposedOreFront(target)
+	local hasBlock,data = turtle.inspect()
+	local name = hasBlock and data and data.name or 0
+	self:setMapValue(target.x,target.y,target.z,name)
+	if hasBlock and checkOreBlock(name) and self:isInsideActiveMiningBounds(target) then
+		if self:dig() then
+			if self:getTunnelMaterialSlot() then self:placeBlock(veinBackfillItem) end
+			return true
 		end
 	end
-	ct = ct + 1
-	
-	until ct > default.maxVeinSize
-	
-	-- Return along the exact ore-vein route and seal temporary cavities.
-	self:cleanupVeinTrace(startPos, startOrientation)
+	return false
+end
+
+function Miner:mineExposedOreDown(target)
+	local hasBlock,data = turtle.inspectDown()
+	local name = hasBlock and data and data.name or 0
+	self:setMapValue(target.x,target.y,target.z,name)
+	if hasBlock and checkOreBlock(name) and self:isInsideActiveMiningBounds(target) then
+		if self:digDown() then
+			if self:getTunnelMaterialSlot() then self:placeBlockDown(veinBackfillItem) end
+			return true
+		end
+	end
+	return false
+end
+
+function Miner:mineExposedOreUp(target)
+	local hasBlock,data = turtle.inspectUp()
+	local name = hasBlock and data and data.name or 0
+	self:setMapValue(target.x,target.y,target.z,name)
+	if hasBlock and checkOreBlock(name) and self:isInsideActiveMiningBounds(target) then
+		if self:digUp() then
+			if self:getTunnelMaterialSlot() then self:placeBlockUp(veinBackfillItem) end
+			return true
+		end
+	end
+	return false
+end
+
+function Miner:mineExposedTunnelOres()
+	-- Fair-mining mode: inspect only blocks physically touching the intentional
+	-- 1x2 corridor. Never search the map for a remembered ore and never move
+	-- sideways/down a branch to chase a vein.
+	local startOrientation = self.orientation
+	local lowerPos = vector.new(self.pos.x,self.pos.y,self.pos.z)
+
+	-- Lower side walls.
+	self:turnTo(startOrientation-1)
+	self:mineExposedOreFront(self.pos + self.vectors[self.orientation])
+	self:turnTo(startOrientation+1)
+	self:mineExposedOreFront(self.pos + self.vectors[self.orientation])
+	self:turnTo(startOrientation)
+
+	-- Floor.
+	self:mineExposedOreDown(vector.new(self.pos.x,self.pos.y-1,self.pos.z))
+
+	-- Upper half of the existing 1x2 corridor. We only enter the upper AIR cell;
+	-- if it is not open, leave it for the normal 2-high tunnel logic.
+	if turtle.up() then
+		self:setMapValue(lowerPos.x,lowerPos.y,lowerPos.z,0)
+		self.pos.y = self.pos.y + 1
+		self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+
+		self:turnTo(startOrientation-1)
+		self:mineExposedOreFront(self.pos + self.vectors[self.orientation])
+		self:turnTo(startOrientation+1)
+		self:mineExposedOreFront(self.pos + self.vectors[self.orientation])
+		self:turnTo(startOrientation)
+
+		-- Ceiling.
+		self:mineExposedOreUp(vector.new(self.pos.x,self.pos.y+1,self.pos.z))
+
+		if turtle.down() then
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+			self.pos.y = self.pos.y - 1
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+		else
+			print("EXPOSED ORE CHECK: unable to return to lower tunnel cell")
+		end
+	end
+
+	self:turnTo(startOrientation)
+end
+
+
+function Miner:mineVein()
+	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
+
+	-- No x-ray / remembered-ore chasing. Only harvest ores that are currently
+	-- exposed directly to the maintained 1x2 tunnel, without leaving it.
+	self:mineExposedTunnelOres()
+
 	self.taskList:remove(currentTask)
 end
 
@@ -2595,6 +2637,7 @@ function Miner:mineArea(start, finish)
 			self:error("UNABLE TO GET TO AREA") -- resumable
 		else
 			self:turnTo(orientation)
+			self:setActiveMiningBounds(start,finish)
 
 			self:updateProgress("stage", 0.05)
 			taskState.stage = 2
@@ -2608,6 +2651,7 @@ function Miner:mineArea(start, finish)
 
 	-- Stage 2: Execute post-stripMine steps
 	if taskState.stage == 2 then
+		self.activeMiningBounds = nil
 
 		self:updateProgress("stage", 0.96)
 		self:returnHome()
