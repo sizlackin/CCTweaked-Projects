@@ -3557,6 +3557,201 @@ end
 
 
 
+
+-- LABENHANCED_TUNNEL_REMAP
+-- Non-destructively rebuild the map by physically walking connected, same-level
+-- open tunnels. This routine NEVER calls dig/digUp/digDown. It records the real
+-- world with turtle.inspect(), backtracks along the exact route it travelled,
+-- and finishes at the position/orientation where it started.
+function Miner:remapTunnels(radius, maxCells)
+	radius = tonumber(radius) or 256
+	maxCells = tonumber(maxCells) or 2500
+	radius = math.max(8, math.min(radius, 512))
+	maxCells = math.max(16, math.min(maxCells, 10000))
+
+	local currentTask = self:addCheckTask({"remapTunnels"})
+	local startPos = vector.new(self.pos.x, self.pos.y, self.pos.z)
+	local startOrientation = self.orientation
+	local baseY = self.pos.y
+	local radiusSq = radius * radius
+	local visited = {}
+	local scanned = 0
+	local stopExpanding = false
+	local lowFuel = false
+
+	local function key(pos)
+		return pos.x .. "," .. pos.y .. "," .. pos.z
+	end
+
+	local function inRange(pos)
+		if pos.y ~= baseY then return false end
+		local dx = pos.x - startPos.x
+		local dz = pos.z - startPos.z
+		return dx * dx + dz * dz <= radiusSq
+	end
+
+	local function blockName(hasBlock, data)
+		if hasBlock and type(data) == "table" then
+			return data.name
+		end
+		return 0
+	end
+
+	local function checkCancelled()
+		-- addCheckTask is the normal Miner cancellation checkpoint. Add/remove a
+		-- tiny step task so Options/Cancel can still stop a long remap safely.
+		local t = self:addCheckTask({"remapTunnelStep"})
+		self.taskList:remove(t)
+	end
+
+	local function rawMoveForward(dir)
+		self:turnTo(dir)
+		local oldPos = vector.new(self.pos.x, self.pos.y, self.pos.z)
+		if not turtle.forward() then
+			local hasBlock, data = turtle.inspect()
+			local target = oldPos + self.vectors[dir]
+			self:setMapValue(target.x, target.y, target.z, blockName(hasBlock, data))
+			return false
+		end
+
+		self:setMapValue(oldPos.x, oldPos.y, oldPos.z, 0)
+		self.pos = oldPos + self.vectors[dir]
+		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
+		self:updateLookingAt()
+		return true
+	end
+
+	local function scanCurrentCell()
+		-- Current cell is known air because the turtle physically occupies it.
+		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
+
+		local hasUp, upData = turtle.inspectUp()
+		self:setMapValue(self.pos.x, self.pos.y + 1, self.pos.z, blockName(hasUp, upData))
+
+		local hasDown, downData = turtle.inspectDown()
+		self:setMapValue(self.pos.x, self.pos.y - 1, self.pos.z, blockName(hasDown, downData))
+
+		local originalOrientation = self.orientation
+		local dirs = {}
+
+		for dir = 0, 3 do
+			self:turnTo(dir)
+			local hasBlock, data = turtle.inspect()
+			local target = self.pos + self.vectors[dir]
+			self:setMapValue(target.x, target.y, target.z, blockName(hasBlock, data))
+
+			if not hasBlock and inRange(target) and not visited[key(target)] then
+				dirs[#dirs + 1] = dir
+			end
+			sleep(0)
+		end
+
+		self:turnTo(originalOrientation)
+
+		-- Only expand through cells which look like the lower half of a walkable
+		-- tunnel: air above and a physical floor below. We still record any
+		-- non-tunnel cell we step into, but do not fan out from it. This greatly
+		-- reduces accidental exploration of giant caves.
+		local tunnelLike = (not hasUp) and hasDown
+		return dirs, tunnelLike
+	end
+
+	print("NON-DESTRUCTIVE TUNNEL REMAP")
+	print("radius:", radius, "max cells:", maxCells)
+	print("Y level:", baseY)
+	print("NO BLOCKS WILL BE MINED")
+
+	visited[key(startPos)] = true
+	local stack = {
+		{
+			enteredDir = nil,
+			scanned = false,
+			dirs = nil,
+			nextDir = 1,
+			expandable = true,
+		}
+	}
+
+	while #stack > 0 do
+		checkCancelled()
+		local frame = stack[#stack]
+
+		if not frame.scanned then
+			frame.dirs, frame.expandable = scanCurrentCell()
+			frame.scanned = true
+			frame.nextDir = 1
+			scanned = scanned + 1
+
+			if scanned >= maxCells then
+				stopExpanding = true
+				print("REMAP CELL LIMIT REACHED - RETURNING TO START")
+			end
+		end
+
+		local descend = false
+		if not stopExpanding and frame.expandable then
+			while frame.nextDir <= #frame.dirs do
+				local dir = frame.dirs[frame.nextDir]
+				frame.nextDir = frame.nextDir + 1
+				local target = self.pos + self.vectors[dir]
+				local targetKey = key(target)
+
+				if inRange(target) and not visited[targetKey] then
+					local fuel = turtle.getFuelLevel()
+					if type(fuel) == "number" and fuel ~= "unlimited"
+					and fuel <= (#stack + 128) then
+						lowFuel = true
+						stopExpanding = true
+						print("LOW FUEL RESERVE - RETURNING TO START")
+						break
+					end
+
+					if rawMoveForward(dir) then
+						visited[targetKey] = true
+						stack[#stack + 1] = {
+							enteredDir = dir,
+							scanned = false,
+							dirs = nil,
+							nextDir = 1,
+							expandable = true,
+						}
+						descend = true
+						break
+					end
+				end
+			end
+		end
+
+		if not descend then
+			if #stack == 1 then
+				break
+			end
+
+			local enteredDir = frame.enteredDir
+			table.remove(stack)
+			local backDir = (enteredDir + 2) % 4
+			if not rawMoveForward(backDir) then
+				self:turnTo(startOrientation)
+				self.taskList:remove(currentTask)
+				error("TUNNEL REMAP BACKTRACK BLOCKED - REFUSING TO DIG", 0)
+			end
+		end
+
+		sleep(0)
+	end
+
+	self:turnTo(startOrientation)
+	self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
+	self.map:save()
+	self.taskList:remove(currentTask)
+
+	print("TUNNEL REMAP COMPLETE")
+	print("mapped cells:", scanned)
+	if lowFuel then print("stopped early because of fuel reserve") end
+	print("returned to start:", self.pos.x, self.pos.y, self.pos.z)
+	return true, scanned
+end
+
 function Miner:recoverTurtle(id, pos)
 	-- UNTESTED
 	-- navigate to a turtle at pos, mine, place, reboot
