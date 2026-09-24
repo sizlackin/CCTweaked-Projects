@@ -1413,6 +1413,7 @@ function Miner:back()
 	if result then
 		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
 		self.pos = self.pos - self.vectors[self.orientation]
+		self:recordTunnelTraversal(tunnelFrom,self.pos)
 		if self.veinRecording and self.veinTrace then
 			table.insert(self.veinTrace, vector.new(self.pos.x,self.pos.y,self.pos.z))
 		end
