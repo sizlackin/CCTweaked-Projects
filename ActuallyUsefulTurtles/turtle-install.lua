@@ -79,6 +79,28 @@ for i, path in ipairs(files) do
   end
   if i % 10 == 0 then print(i .. "/" .. #files .. " files processed") end
 end
+-- Fix blockColor watchdog timeout before first boot.
+do
+  local target = "runtime/blockColor.lua"
+  local f = assert(fs.open(target, "r"))
+  local data = f.readAll()
+  f.close()
+
+  local old = "local dist = deltaEFromRGB(r, g, b, cr, cg, cb)"
+  local new = "local dist = deltaE(r, g, b, cr, cg, cb) -- LABENHANCED_BLOCKCOLOR_FIX"
+  local s, e = data:find(old, 1, true)
+  if s then data = data:sub(1, s - 1) .. new .. data:sub(e + 1) end
+
+  local old2 = "nameToBlit[name] = blitTab[best]\\n\\t\\tidToBlit[nameToId[name]] = blitTab[best]"
+  local new2 = "nameToBlit[name] = blitTab[best]\\n\\t\\tlocal id = nameToId[name]\\n\\t\\tif id then idToBlit[id] = blitTab[best] end\\n\\t\\tsleep(0)"
+  local s2, e2 = data:find(old2, 1, true)
+  if s2 then data = data:sub(1, s2 - 1) .. new2 .. data:sub(e2 + 1) end
+
+  local out = assert(fs.open(target, "w"))
+  out.write(data)
+  out.close()
+end
+
 -- Startup includes host synchronization, which updates all files as needed.
 local startupData = fetch("turtle/startup.lua")
 local output = assert(fs.open("startup.lua", "w"))
