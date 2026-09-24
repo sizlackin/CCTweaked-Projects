@@ -2449,6 +2449,16 @@ function Miner:tunnel(length, direction, noInspect)
 		else
 			skipSteps = skipSteps - 1
 		end
+
+		-- LABENHANCED_2HIGH_TUNNELS
+		-- Horizontal mining tunnels are kept two blocks tall.
+		if not direction or direction == "straight" then
+			local above = self:inspectUp(true)
+			if above and not checkDisallowed(above) then
+				self:digUp()
+			end
+		end
+
 		self:updateProgress("tunnel", i)
 	end
 	
