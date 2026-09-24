@@ -24,6 +24,15 @@ local function isTurtleBlock(name)
 		or name == "computercraft:turtle"
 end
 
+local function isTunnelDecoration(name)
+	return name == "minecraft:torch"
+		or name == "minecraft:wall_torch"
+		or name == "minecraft:soul_torch"
+		or name == "minecraft:soul_wall_torch"
+end
+
+Navigator.isTunnelDecoration = isTunnelDecoration -- LABENHANCED_TORCH_BYPASS
+
 function Navigator:new(miner)
 	local o = {
 		miner=miner,
@@ -168,7 +177,15 @@ function Navigator:moveAdjacent(target)
 	end
 
 	local hasBlock,data = self:_inspectDirection(dir)
-	local state,name = self:_recordBlocked(from,dir,hasBlock,data)
+	local name = hasBlock and data and data.name or nil
+	if hasBlock and isTunnelDecoration(name) then
+		-- A turtle cannot occupy the same lower tunnel cell as a torch. Do not
+		-- call it a permanent tunnel closure: the Mapper can preserve the torch
+		-- and route through the upper half of the 2-high tunnel instead.
+		return false,"decoration",name
+	end
+	local state
+	state,name = self:_recordBlocked(from,dir,hasBlock,data)
 	return false,state,name
 end
 
