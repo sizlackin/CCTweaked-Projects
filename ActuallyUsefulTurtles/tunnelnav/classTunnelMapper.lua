@@ -33,7 +33,7 @@ local orientForDir = {
 function Mapper:new(miner,navigator)
 	local o = {
 		miner=miner,
-		navigator=navigator,
+		navigator=navigator or (miner and miner.tunnelNavigator) or nil, -- LABENHANCED_MAPPER_NAV_FIX
 	}
 	setmetatable(o,self)
 	return o
@@ -201,6 +201,9 @@ end
 
 
 function Mapper:mapNetwork(radius,maxCells)
+	if not self.navigator then
+		error("TUNNEL MAPPER NAVIGATOR NOT INITIALIZED",0)
+	end
 	radius = tonumber(radius) or 512
 	maxCells = tonumber(maxCells) or 20000
 	radius = math.max(8,math.min(radius,2048))
