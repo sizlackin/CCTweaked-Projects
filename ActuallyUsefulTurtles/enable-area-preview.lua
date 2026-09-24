@@ -1,4 +1,4 @@
--- Adds a green area preview + CONFIRM button to Groups > Create > Select area.
+-- Adds a green area preview + bottom UNDO/CONFIRM controls to Groups > Create > Select area.
 -- Run this on the MAIN CONTROLLER at the normal CraftOS > prompt.
 local url = "https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/patches/classTaskGroupSelector.lua"
 local targets = {"gui/classTaskGroupSelector.lua", "runtime/classTaskGroupSelector.lua"}
@@ -16,6 +16,9 @@ end
 local data = r.readAll()
 r.close()
 if #data < 3000 then error("Downloaded patch looks incomplete.", 0) end
+if not data:find('"UNDO"', 1, true) or not data:find('"CONFIRM"', 1, true) then
+  error("Downloaded patch does not contain the updated area controls.", 0)
+end
 
 for _, path in ipairs(targets) do
   fs.makeDir(fs.getDir(path))
@@ -25,4 +28,4 @@ for _, path in ipairs(targets) do
   print("Patched " .. path)
 end
 
-print("Area preview + bottom RESELECT/CONFIRM controls enabled. Reboot the controller.")
+print("Area preview + bottom UNDO/CONFIRM controls enabled. Reboot the controller.")
