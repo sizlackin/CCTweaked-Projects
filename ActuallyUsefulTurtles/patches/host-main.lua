@@ -445,6 +445,8 @@ node.onRequestAnswer = function(forMsg)
 				origin=req.origin,
 				radius=req.radius,
 				maxNodes=40000,
+				claimant=sender, -- LABENHANCED_MULTI_MAPPER_CLAIMS
+				claimTtl=req.claimTtl or 120000,
 			})
 			local stats = tunnelMap:getStats()
 			if frontier then
@@ -454,6 +456,24 @@ node.onRequestAnswer = function(forMsg)
 				node:answer(forMsg, {"TUNNEL_FRONTIER_FAILED", reason or "no_frontier", stats})
 			end
 		end
+
+	elseif txt == "TUNNEL_FRONTIER_RENEW" then
+		local req = data[2] or {}
+		local ok,expires = false,nil
+		if tunnelMap and req.source and req.dir then
+			ok,expires = tunnelMap:renewFrontierClaim(
+				req.source,req.dir,sender,req.claimTtl or 120000
+			)
+		end
+		node:answer(forMsg, {"TUNNEL_FRONTIER_RENEWED", ok, expires})
+
+	elseif txt == "TUNNEL_FRONTIER_RELEASE" then
+		local req = data[2] or {}
+		local ok = false
+		if tunnelMap and req.source and req.dir then
+			ok = tunnelMap:releaseFrontierClaim(req.source,req.dir,sender)
+		end
+		node:answer(forMsg, {"TUNNEL_FRONTIER_RELEASED", ok})
 
 	elseif txt == "TUNNEL_NODE_REQUEST" then
 		local pos = data[2]
