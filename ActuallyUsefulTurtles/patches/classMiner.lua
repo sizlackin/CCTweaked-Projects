@@ -37,6 +37,10 @@ local fuelItems = {
 ["minecraft:coal_block"]=800,
 ["minecraft:lava_bucket"]=1000,
 }
+
+-- LabEnhanced clean-mining patch:
+-- temporary ore-vein cavities are sealed with cobbled deepslate only.
+local veinBackfillItem = "minecraft:cobbled_deepslate"
 -- do not translate
 
 -- blocks that can explicitly be mined, without making the world look destroyed
@@ -214,6 +218,9 @@ function Miner:new()
 	o.vectors = vectors
 	o.checkPointer = CheckPointer:new()
 	o.statusCount = 0
+	o.veinTrace = nil
+	o.veinExcavated = nil
+	o.veinRecording = false
 	
 	o:initialize() -- initialize after starting parallel tasks in startup.lua
 	--print("--------------------")
@@ -532,7 +539,7 @@ function Miner:returnHome()
 	self.returningHome = true
 	if self.home then
 		print("RETURNING HOME", self.home.x, self.home.y, self.home.z)
-		result = self:navigateToPos(self.home.x, self.home.y, self.home.z)
+		result = self:navigateOpenPathToPos(self.home.x, self.home.y, self.home.z)
 		self:turnTo(self.homeOrientation)
 	end
 	self.returningHome = false
@@ -743,7 +750,7 @@ function Miner:offloadItemsAtHome()
 			self:error("INVENTORY_FULL")
 		else
 			-- do nothing and return to task
-			self:navigateToPos(startPos.x, startPos.y, startPos.z)
+			self:navigateOpenPathToPos(startPos.x, startPos.y, startPos.z)
 			self:turnTo(startOrientation)
 		end
 	end
@@ -781,6 +788,8 @@ function Miner:transferItems()
 			if data and data.name then
 				if not hasFuel and fuelItems[data.name] then
 					hasFuel = true --keep the fuel
+				elseif self.veinTrace and data.name == veinBackfillItem then
+					-- Keep cobbled deepslate until the vein cavity has been sealed.
 				else
 					--transfer items
 					self:select(slot)
@@ -805,11 +814,15 @@ function Miner:dumpBadItems(dropAll)
 		local slot = (i+startSlot-1)%default.inventorySize +1
 		local data = turtle.getItemDetail(slot)
 		if data and (mineBlocks[data.name] or ( dropAll and not fuelItems[data.name])) then
-			--drop items
-			self:select(slot)
-			local ok = turtle.drop(data.count)
-			if ok ~= true then
-				print(ok,"inventory in front is full")
+			if self.veinTrace and data.name == veinBackfillItem then
+				-- Reserve cobbled deepslate for closing the current vein excursion.
+			else
+				--drop items
+				self:select(slot)
+				local ok = turtle.drop(data.count)
+				if ok ~= true then
+					print(ok,"inventory in front is full")
+				end
 			end
 		end
 	end	
@@ -910,7 +923,7 @@ function Miner:refuel(simple)
 				else
 					refueled = true
 					if not self.returningHome then
-						self:navigateToPos(startPos.x, startPos.y, startPos.z)
+						self:navigateOpenPathToPos(startPos.x, startPos.y, startPos.z)
 						self:turnTo(startOrientation)
 					end
 					-- actual refueling happens with the next refuel call
@@ -1095,6 +1108,8 @@ function Miner:getFuel()
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	
 	self.gettingFuel = true
+	local previousVeinRecording = self.veinRecording
+	self.veinRecording = false
 	local result = false
 	
 	local ok, err = pcall( function() 
@@ -1115,7 +1130,7 @@ function Miner:getFuel()
 					math.random(origin.z-maxDistance, origin.z+maxDistance)
 				)
 				print("moving to queue", randomPosition)
-				isInQueue = self:navigateToPos(randomPosition.x, randomPosition.y, randomPosition.z)
+				isInQueue = self:navigateOpenPathToPos(randomPosition.x, randomPosition.y, randomPosition.z)
 				if not isInQueue and tries > 3 then
 					print("cant reach refuel queue")
 					isInQueue = true -- set to true anyways, should be nearby the queue
@@ -1131,7 +1146,7 @@ function Miner:getFuel()
 		local station = config.stations.refuel[id]
 
 		-- actually refuel
-		if not self:navigateToPos(station.pos.x, station.pos.y, station.pos.z) then
+		if not self:navigateOpenPathToPos(station.pos.x, station.pos.y, station.pos.z) then
 			--print("unable to reach station")
 			return false
 		end
@@ -1176,7 +1191,8 @@ function Miner:getFuel()
 	-- done refueling
 	self:releaseStation()
 
-	self.gettingFuel = false -- to allow actual refueling 
+	self.gettingFuel = false -- to allow actual refueling
+	self.veinRecording = previousVeinRecording
 
 	if self:getEmptySlots() < 10 then -- 8
 		-- already at home, also offload items
@@ -1278,6 +1294,9 @@ function Miner:forward()
 	if result then
 		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
 		self.pos = self.pos + self.vectors[self.orientation]
+		if self.veinRecording and self.veinTrace then
+			table.insert(self.veinTrace, vector.new(self.pos.x,self.pos.y,self.pos.z))
+		end
 		-- TODO: setMapValue of current position to avoid wrong entries
 		--self:setMapValue(self.pos.x, self.pos.y, self.pos.z,default.turtleName)
 	end
@@ -1292,6 +1311,9 @@ function Miner:back()
 	if result then
 		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
 		self.pos = self.pos - self.vectors[self.orientation]
+		if self.veinRecording and self.veinTrace then
+			table.insert(self.veinTrace, vector.new(self.pos.x,self.pos.y,self.pos.z))
+		end
 		--self:setMapValue(self.pos.x, self.pos.y, self.pos.z,default.turtleName)
 	end
 	--self.taskList:remove(currentTask)
@@ -1304,6 +1326,9 @@ function Miner:up()
 	if result then
 		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
 		self.pos.y = self.pos.y + 1
+		if self.veinRecording and self.veinTrace then
+			table.insert(self.veinTrace, vector.new(self.pos.x,self.pos.y,self.pos.z))
+		end
 		--self:setMapValue(self.pos.x, self.pos.y, self.pos.z,default.turtleName)
 	end
 	--self.taskList:remove(currentTask)
@@ -1316,6 +1341,9 @@ function Miner:down()
 	if result then
 		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
 		self.pos.y = self.pos.y - 1
+		if self.veinRecording and self.veinTrace then
+			table.insert(self.veinTrace, vector.new(self.pos.x,self.pos.y,self.pos.z))
+		end
 		--self:setMapValue(self.pos.x, self.pos.y, self.pos.z,default.turtleName)
 	end
 	--self.taskList:remove(currentTask)
@@ -1418,9 +1446,13 @@ end
 
 function Miner:dig(side)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
+	self:updateLookingAt()
+	local target = vector.new(self.lookingAt.x,self.lookingAt.y,self.lookingAt.z)
 	local result = turtle.dig(side)
 	if result then
-		self:updateLookingAt()
+		if self.veinRecording and self.veinExcavated then
+			self.veinExcavated[target.x..","..target.y..","..target.z] = true
+		end
 		-- local block = self:getMapValue(self.lookingAt.x, self.lookingAt.y, self.lookingAt.z)
 		-- if block and block ~= 0 then
 			self:setMapValue(self.lookingAt.x, self.lookingAt.y, self.lookingAt.z,0)
@@ -1432,8 +1464,12 @@ end
 
 function Miner:digUp(side)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
+	local target = vector.new(self.pos.x,self.pos.y+1,self.pos.z)
 	local result = turtle.digUp(side)
 	if result then
+		if self.veinRecording and self.veinExcavated then
+			self.veinExcavated[target.x..","..target.y..","..target.z] = true
+		end
 		-- local block = self:getMapValue(self.pos.x, self.pos.y+1, self.pos.z)
 		-- if block and block ~= 0 then
 			self:setMapValue(self.pos.x, self.pos.y+1, self.pos.z, 0)
@@ -1445,8 +1481,12 @@ end
 
 function Miner:digDown(side)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
+	local target = vector.new(self.pos.x,self.pos.y-1,self.pos.z)
 	local result = turtle.digDown(side)
 	if result then
+		if self.veinRecording and self.veinExcavated then
+			self.veinExcavated[target.x..","..target.y..","..target.z] = true
+		end
 		-- local block = self:getMapValue(self.pos.x, self.pos.y-1, self.pos.z) 
 		-- if block and block ~= 0 then
 			self:setMapValue(self.pos.x, self.pos.y-1, self.pos.z, 0)
@@ -1834,6 +1874,153 @@ function Miner:digToPos(x,y,z,safe)
 	return result
 end
 
+local function cleanPosKey(pos)
+	return pos.x..","..pos.y..","..pos.z
+end
+
+function Miner:moveNoDigToAdjacent(target)
+	local dx = target.x - self.pos.x
+	local dy = target.y - self.pos.y
+	local dz = target.z - self.pos.z
+	if math.abs(dx) + math.abs(dy) + math.abs(dz) ~= 1 then return false end
+
+	local ok = false
+	if dy > 0 then
+		ok = turtle.up()
+		if not ok then
+			local hasBlock, data = turtle.inspectUp()
+			self:setMapValue(target.x,target.y,target.z,(hasBlock and data and data.name) or 0)
+		end
+	elseif dy < 0 then
+		ok = turtle.down()
+		if not ok then
+			local hasBlock, data = turtle.inspectDown()
+			self:setMapValue(target.x,target.y,target.z,(hasBlock and data and data.name) or 0)
+		end
+	else
+		self:turnToPos(target.x,target.y,target.z)
+		ok = turtle.forward()
+		if not ok then
+			local hasBlock, data = turtle.inspect()
+			self:setMapValue(target.x,target.y,target.z,(hasBlock and data and data.name) or 0)
+		end
+	end
+
+	if ok then
+		self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+		self.pos = vector.new(target.x,target.y,target.z)
+		self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+	end
+	return ok
+end
+
+function Miner:placeCobbledDeepslateAt(target)
+	local slot = self:findInventoryItem(veinBackfillItem)
+	if not slot then return false, "NO_COBBLED_DEEPSLATE" end
+	if not self:select(slot) then return false, "SELECT_FAILED" end
+
+	local dx = target.x - self.pos.x
+	local dy = target.y - self.pos.y
+	local dz = target.z - self.pos.z
+	if math.abs(dx) + math.abs(dy) + math.abs(dz) ~= 1 then return false, "NOT_ADJACENT" end
+
+	local ok, reason
+	if dy > 0 then
+		ok, reason = turtle.placeUp()
+	elseif dy < 0 then
+		ok, reason = turtle.placeDown()
+	else
+		self:turnToPos(target.x,target.y,target.z)
+		ok, reason = turtle.place()
+	end
+
+	if ok then
+		self:setMapValue(target.x,target.y,target.z,veinBackfillItem)
+	end
+	return ok, reason
+end
+
+function Miner:cleanupVeinTrace(startPos, startOrientation)
+	local trace = self.veinTrace or {}
+	local excavated = self.veinExcavated or {}
+	local remaining = {}
+	for _,pos in ipairs(trace) do
+		local key = cleanPosKey(pos)
+		remaining[key] = (remaining[key] or 0) + 1
+	end
+
+	self.veinRecording = false
+	local startKey = cleanPosKey(startPos)
+	local warned = false
+	local result = true
+
+	for i = #trace, 2, -1 do
+		local cur = trace[i]
+		local prev = trace[i-1]
+		local curKey = cleanPosKey(cur)
+
+		if not self:moveNoDigToAdjacent(prev) then
+			print("VEIN RETURN BLOCKED - REFUSING TO DIG")
+			result = false
+			break
+		end
+
+		remaining[curKey] = (remaining[curKey] or 1) - 1
+		if curKey ~= startKey and excavated[curKey] and remaining[curKey] <= 0 then
+			local ok, reason = self:placeCobbledDeepslateAt(cur)
+			if not ok and reason == "NO_COBBLED_DEEPSLATE" and not warned then
+				print("NO COBBLED DEEPSLATE - SKIPPING VEIN BACKFILL")
+				warned = true
+			end
+		end
+	end
+
+	self.veinTrace = nil
+	self.veinExcavated = nil
+	self.veinRecording = false
+	self:turnTo(startOrientation)
+	return result and self.pos == startPos
+end
+
+function Miner:navigateOpenPathToPos(x,y,z)
+	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
+	local goal = vector.new(x,y,z)
+	local wasRecording = self.veinRecording
+	self.veinRecording = false
+	local result = false
+
+	if self.pos == goal then
+		result = true
+	else
+		self.map:setMaxChunks(800)
+		for attempt=1,3 do
+			local pathFinder = PathFinder()
+			pathFinder.checkValid = function(id) return id == 0 end
+			local path = pathFinder:aStarPart(self.pos, self.orientation, goal, self.map, 10000)
+			if not path then
+				print("NO OPEN PATH TO",x,y,z,"- REFUSING TO DIG")
+				break
+			end
+
+			result = true
+			for i=1,#path do
+				local step = path[i]
+				if step.pos ~= self.pos and not self:moveNoDigToAdjacent(step.pos) then
+					print("OPEN PATH BLOCKED - REFUSING TO DIG")
+					result = false
+					break
+				end
+			end
+			if result and self.pos == goal then break end
+		end
+	end
+
+	self.veinRecording = wasRecording
+	self.taskList:remove(currentTask)
+	return result and self.pos == goal
+end
+
+
 function Miner:mineVein() 
 	--ore in front? dig, move, inspect
 	--ore left? turnleft, dig, move, inspect
@@ -1852,6 +2039,9 @@ function Miner:mineVein()
 
 	local startPos = vector.new(self.pos.x, self.pos.y, self.pos.z)
 	local startOrientation = self.orientation
+	self.veinTrace = { vector.new(startPos.x,startPos.y,startPos.z) }
+	self.veinExcavated = {}
+	self.veinRecording = true
 	local block
 	local ct = 0
 	local isInVein = false
@@ -1916,9 +2106,8 @@ function Miner:mineVein()
 	
 	until ct > default.maxVeinSize
 	
-	--return to start
-	self:navigateToPos(startPos.x, startPos.y, startPos.z)
-	self:turnTo(startOrientation)
+	-- Return along the exact ore-vein route and seal temporary cavities.
+	self:cleanupVeinTrace(startPos, startOrientation)
 	self.taskList:remove(currentTask)
 end
 
