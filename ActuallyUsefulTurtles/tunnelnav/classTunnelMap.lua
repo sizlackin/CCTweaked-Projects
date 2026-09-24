@@ -173,8 +173,7 @@ function TunnelMap:_applyOne(pos,dir,state,seen,until,resume)
 		local other = self:ensureNode(target,seen)
 		local opp = d.opposite
 		local otherOld = other.connections[opp]
-		if not otherOld or not otherOld.seen or seen >= otherOld.seen
-		or otherOld.state ~= TunnelMap.STATE.OPEN then
+		if not otherOld or not otherOld.seen or seen >= otherOld.seen then
 			other.connections[opp] = {state=TunnelMap.STATE.OPEN,seen=seen}
 			self:_setFrontier(target,opp,false,seen)
 			changed = true
