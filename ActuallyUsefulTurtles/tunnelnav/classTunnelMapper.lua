@@ -215,10 +215,14 @@ function Mapper:mapNetwork(radius,maxCells)
 	print("radius:",radius,"max new cells:",maxCells)
 	print("NO BLOCKS WILL BE MINED")
 
-	-- Do not rescan a node another turtle already mapped.
+	-- LABENHANCED_MAPPER_REFRESH_KNOWN
+	-- The road graph may already know this node while the visual/block map does
+	-- not (for example after a map reset or when floor-colors were enabled
+	-- later). Refresh the occupied cell/floor and discover only directions that
+	-- are still missing/unmapped; surveyCurrent preserves known OPEN edges.
 	local currentNode = nav:requestNode(m.pos)
+	self:surveyCurrent(currentNode)
 	if not currentNode then
-		self:surveyCurrent(nil)
 		mapped = mapped + 1
 	end
 
@@ -238,7 +242,22 @@ function Mapper:mapNetwork(radius,maxCells)
 		end
 
 		if frontier.path and #frontier.path > 0 then
-			local ok = nav:followPath(frontier.path)
+			local ok = true
+			for i=1,#frontier.path do
+				local p = frontier.path[i]
+				if not nav:moveAdjacent(vector.new(p.x,p.y,p.z)) then
+					ok = false
+					break
+				end
+
+				-- Dedicated mapping mode should refresh visual coverage while
+				-- travelling over known roads. This does NOT dig and does not
+				-- re-explore already-known OPEN connections.
+				local knownNode = nav:requestNode(m.pos)
+				self:surveyCurrent(knownNode)
+				if i % 16 == 0 then sleep(0) end
+			end
+
 			if not ok then
 				failedFrontiers = failedFrontiers + 1
 				if failedFrontiers > 32 then
