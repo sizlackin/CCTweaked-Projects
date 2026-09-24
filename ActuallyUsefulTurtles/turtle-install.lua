@@ -2,6 +2,7 @@
 -- Run on a brand-new mining turtle with a wireless/ender modem.
 local raw = "https://raw.githubusercontent.com/helpmyRF24isntworking/computercraft/main/"
 local patchedMiner = "https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/patches/classMiner.lua"
+local patchedBlockColor = "https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/patches/blockColor.lua"
 local files = {
   "general/blockColor.lua",
   "general/blockTranslation.lua",
@@ -48,7 +49,10 @@ print("Installing " .. #files .. " source files...")
 local function fetch(path)
   local lastError
   for attempt = 1, 3 do
-    local response, err = http.get(path == "turtle/classMiner.lua" and patchedMiner or (raw .. path))
+    local sourceUrl = raw .. path
+    if path == "turtle/classMiner.lua" then sourceUrl = patchedMiner end
+    if path == "general/blockColor.lua" then sourceUrl = patchedBlockColor end
+    local response, err = http.get(sourceUrl)
     if response then
       if response.getResponseCode() == 200 then
         local data = response.readAll()
@@ -79,36 +83,6 @@ for i, path in ipairs(files) do
   end
   if i % 10 == 0 then print(i .. "/" .. #files .. " files processed") end
 end
--- Fix blockColor watchdog timeout before first boot.
-do
-  local target = "runtime/blockColor.lua"
-  local f = assert(fs.open(target, "r"))
-  local data = f.readAll()
-  f.close()
-
-  local old = "local dist = deltaEFromRGB(r, g, b, cr, cg, cb)"
-  local new = "local dist = deltaE(r, g, b, cr, cg, cb) -- LABENHANCED_BLOCKCOLOR_FIX"
-  if data:find(old, 1, true) then
-    data = data:gsub(old, new, 1)
-  end
-
-  local oldLine = "idToBlit[nameToId[name]] = blitTab[best]"
-  local replacement = "local id = nameToId[name]\n\t\tif id then idToBlit[id] = blitTab[best] end\n\t\tsleep(0) -- LABENHANCED_BLOCKCOLOR_YIELD"
-  if not data:find("LABENHANCED_BLOCKCOLOR_YIELD", 1, true) then
-    if data:find(oldLine, 1, true) then
-      data = data:gsub(oldLine, replacement, 1)
-    end
-  end
-
-  if not data:find("LABENHANCED_BLOCKCOLOR_YIELD", 1, true) then
-    error("Could not patch blockColor watchdog yield.", 0)
-  end
-
-  local out = assert(fs.open(target, "w"))
-  out.write(data)
-  out.close()
-end
-
 -- Startup includes host synchronization, which updates all files as needed.
 local startupData = fetch("turtle/startup.lua")
 local output = assert(fs.open("startup.lua", "w"))
