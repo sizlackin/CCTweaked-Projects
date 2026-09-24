@@ -1,6 +1,7 @@
 -- Clean turtle installer for Actually Useful Turtles.
 -- Run on a brand-new mining turtle with a wireless/ender modem.
 local raw = "https://raw.githubusercontent.com/helpmyRF24isntworking/computercraft/main/"
+local patchedMiner = "https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/patches/classMiner.lua"
 local files = {
   "general/blockColor.lua",
   "general/blockTranslation.lua",
@@ -47,7 +48,7 @@ print("Installing " .. #files .. " source files...")
 local function fetch(path)
   local lastError
   for attempt = 1, 3 do
-    local response, err = http.get(raw .. path)
+    local response, err = http.get(path == "turtle/classMiner.lua" and patchedMiner or (raw .. path))
     if response then
       if response.getResponseCode() == 200 then
         local data = response.readAll()
