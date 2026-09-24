@@ -197,6 +197,7 @@ function Miner:new()
 	setmetatable(o,self)
 
 	print("----INITIALIZING----")
+	print("LabEnhanced miner: clean-return + lava tunnel v2")
 	assert(turtle,"this device is not a turtle")
 	
 	o.fuelLimit = turtle.getFuelLimit()
@@ -764,6 +765,7 @@ function Miner:transferItems()
 	--do not transfer all fuel items (keep 1 stack)
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local hasFuel = false
+	local hasTunnelMaterial = false
 	local hasInventory = false
 	local startOrientation = self.orientation
 	
@@ -788,8 +790,10 @@ function Miner:transferItems()
 			if data and data.name then
 				if not hasFuel and fuelItems[data.name] then
 					hasFuel = true --keep the fuel
-				elseif self.veinTrace and data.name == veinBackfillItem then
-					-- Keep cobbled deepslate until the vein cavity has been sealed.
+				elseif data.name == veinBackfillItem and (self.veinTrace or not hasTunnelMaterial) then
+					-- Always keep one stack for tunnel/lava maintenance. During a
+					-- vein excursion keep all cobbled deepslate until cleanup is done.
+					hasTunnelMaterial = true
 				else
 					--transfer items
 					self:select(slot)
@@ -810,12 +814,15 @@ function Miner:dumpBadItems(dropAll)
 	--check for bad items and drop them
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local startSlot = turtle.getSelectedSlot()
+	local hasTunnelMaterial = false
 	for i = 0,default.inventorySize-1 do
 		local slot = (i+startSlot-1)%default.inventorySize +1
 		local data = turtle.getItemDetail(slot)
 		if data and (mineBlocks[data.name] or ( dropAll and not fuelItems[data.name])) then
-			if self.veinTrace and data.name == veinBackfillItem then
-				-- Reserve cobbled deepslate for closing the current vein excursion.
+			if data.name == veinBackfillItem and (self.veinTrace or not hasTunnelMaterial) then
+				-- Always reserve one stack for tunnel maintenance. Preserve all
+				-- cobbled deepslate while closing an active vein excursion.
+				hasTunnelMaterial = true
 			else
 				--drop items
 				self:select(slot)
@@ -2290,8 +2297,11 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 --------------------
 
 	if taskState.stage == 2 then
-		-- only needed for testing i guess
-		self:navigateToPos(vars.startPos.x, vars.startPos.y, vars.startPos.z)
+		-- Return through the tunnel network only. Never carve a 1x1 shortcut
+		-- back to the strip-mine entrance.
+		if not self:navigateOpenPathToPos(vars.startPos.x, vars.startPos.y, vars.startPos.z) then
+			print("NO OPEN TUNNEL PATH BACK TO STRIP START")
+		end
 		self:turnTo(vars.startOrientation)
 	end
 
@@ -2596,6 +2606,98 @@ function Miner:mineArea(start, finish)
 end
 
 
+-- LABENHANCED_LAVA_TUNNEL
+-- Keep a one-wide, two-high corridor usable when a strip tunnel crosses lava.
+-- Cobbled deepslate is only placed where lava directly touches the corridor;
+-- ordinary deepslate walls/floor/ceiling are left alone.
+function Miner:getTunnelMaterialSlot()
+	return self:findInventoryItem(veinBackfillItem)
+end
+
+function Miner:placeTunnelMaterial(side)
+	if not self:getTunnelMaterialSlot() then
+		return false, "NO_COBBLED_DEEPSLATE"
+	end
+	if side == "up" then
+		return self:placeBlockUp(veinBackfillItem)
+	elseif side == "down" then
+		return self:placeBlockDown(veinBackfillItem)
+	else
+		self:updateLookingAt()
+		return self:placeBlock(veinBackfillItem)
+	end
+end
+
+function Miner:displaceLavaAhead()
+	self:updateLookingAt()
+	local block = self:getMapValue(self.lookingAt.x,self.lookingAt.y,self.lookingAt.z)
+	if block == nil then block = self:inspect(true) end
+	if block ~= "minecraft:lava" then return true end
+
+	local ok = self:placeTunnelMaterial("front")
+	if not ok then
+		print("LAVA AHEAD - NO COBBLED DEEPSLATE TO DISPLACE IT")
+		return false
+	end
+
+	-- Re-open the corridor cell after replacing the lava source.
+	self:dig()
+	return true
+end
+
+function Miner:sealLavaAtCurrentLayer(includeFloorCeiling)
+	local startOrientation = self.orientation
+
+	if includeFloorCeiling then
+		local below = self:inspectDown(true)
+		if below == "minecraft:lava" then
+			self:placeTunnelMaterial("down")
+		end
+
+		local above = self:inspectUp(true)
+		if above == "minecraft:lava" then
+			self:placeTunnelMaterial("up")
+		end
+	end
+
+	-- Only seal the two side walls. Front/back remain the tunnel axis.
+	for _,offset in ipairs({-1,1}) do
+		self:turnTo(startOrientation + offset)
+		local sideBlock = self:inspect(true)
+		if sideBlock == "minecraft:lava" then
+			self:placeTunnelMaterial("front")
+		end
+	end
+	self:turnTo(startOrientation)
+end
+
+function Miner:maintainLavaTunnel()
+	local startOrientation = self.orientation
+
+	-- Lower half: side walls + floor.
+	self:sealLavaAtCurrentLayer(true)
+
+	-- Ensure the upper interior cell itself is open. If it is lava, temporarily
+	-- replace the source with cobbled deepslate and dig it back out.
+	local above = self:inspectUp(true)
+	if above == "minecraft:lava" then
+		local ok = self:placeTunnelMaterial("up")
+		if ok then self:digUp() end
+	end
+
+	-- Temporarily occupy the upper tunnel cell so we can seal its side walls
+	-- and ceiling against lava as well.
+	if self:up() then
+		self:sealLavaAtCurrentLayer(true)
+		if not self:down() then
+			print("WARNING: COULD NOT RETURN TO LOWER TUNNEL CELL")
+		end
+	end
+
+	self:turnTo(startOrientation)
+end
+
+
 function Miner:tunnel(length, direction, noInspect)
 	-- throws error
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
@@ -2629,12 +2731,15 @@ function Miner:tunnel(length, direction, noInspect)
 		if skipSteps == 0 then 
 		
 			if not noInspect then self:inspectMine() end
+			if (not direction or direction == "straight") then
+				self:displaceLavaAhead()
+			end
 			if not digFunc(self) then 
 				-- if two turtles get in each others way, steps could be skipped
 				-- try to navigate to next step, else quit
 				if i < length - 1 then
 					local newPos = self.pos + directionVector * 2
-					if not self:navigateToPos(newPos.x, newPos.y, newPos.z) then
+					if not self:navigateOpenPathToPos(newPos.x, newPos.y, newPos.z) then
 						result = false
 						break
 					else 
@@ -2658,6 +2763,7 @@ function Miner:tunnel(length, direction, noInspect)
 			if above and not checkDisallowed(above) then
 				self:digUp()
 			end
+			self:maintainLavaTunnel()
 		end
 
 		self:updateProgress("tunnel", i)
@@ -2666,8 +2772,9 @@ function Miner:tunnel(length, direction, noInspect)
 	if not noInspect then self:inspectMine() end
 	
 	if self.pos ~= expectedEndPos then
-		-- try navigating to the position we should be at
-		if not self:navigateToPos(expectedEndPos.x, expectedEndPos.y, expectedEndPos.z) then
+		-- Only recover through known open tunnel cells. Never drill a 1x1
+		-- correction tunnel after a mining row finishes.
+		if not self:navigateOpenPathToPos(expectedEndPos.x, expectedEndPos.y, expectedEndPos.z) then
 			-- we truly failed
 			result = false
 		else 
