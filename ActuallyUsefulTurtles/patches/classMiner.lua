@@ -2674,6 +2674,31 @@ end
 function Miner:preparePhiloliteBlastRepair(blastPos)
 	if self.activeTunnelAnchor and self.activeTunnelOrientation ~= nil then
 		self:capturePhiloliteTunnelShell(self.activeTunnelAnchor,self.activeTunnelOrientation)
+
+		-- If the Philolite is the next lower tunnel cell directly ahead, that
+		-- cell has not been inspected from the inside yet. Its six shell faces
+		-- are supposed to become solid tunnel lining, so remember them explicitly
+		-- even when the pre-blast map has those neighbors as unknown.
+		local axis = self.vectors[self.activeTunnelOrientation]
+		local expected = self.activeTunnelAnchor + axis
+		if blastPos.x == expected.x and blastPos.y == expected.y and blastPos.z == expected.z then
+			local left = self.vectors[(self.activeTunnelOrientation-1)%4]
+			local right = self.vectors[(self.activeTunnelOrientation+1)%4]
+			self.philoliteRepairCells = self.philoliteRepairCells or {}
+			local key = philolitePosKey(expected)
+			local cell = self.philoliteRepairCells[key] or {
+				pos = vector.new(expected.x,expected.y,expected.z),
+				sides = {},
+			}
+			cell.sides.floor = true
+			cell.sides.ceiling = true
+			cell.sides.leftLower = true
+			cell.sides.rightLower = true
+			cell.sides.leftUpper = true
+			cell.sides.rightUpper = true
+			self.philoliteRepairCells[key] = cell
+		end
+
 		self.philoliteRepairPending = true
 		print("PHILOLITE - tunnel repair queued")
 	end
