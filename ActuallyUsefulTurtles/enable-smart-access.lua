@@ -47,4 +47,4 @@ for _,entry in ipairs(files) do
 end
 
 print("Smart shared mine access installed (supports 2-4 turtles).")
-print("Reboot controller, then reboot DTX-001 and DTX-002.")
+print("Reboot controller, then reboot DTX-001 through DTX-004.")
