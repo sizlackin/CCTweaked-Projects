@@ -544,7 +544,17 @@ function MapDisplay:redraw() -- super override
 			if self.displayFloorColors and blockid == 0 then
 				local floorId = getStoredBlockId(wx, self.mapY - 1, wz)
 				if floorId ~= nil and floorId ~= 0 then
-					pixelCol = colorForBlock(floorId) or blockedCol
+					local floorCol = colorForBlock(floorId)
+					-- LABENHANCED_FLOOR_COLORS_V4
+					-- Preserve the normal light-gray tunnel shape for ordinary
+					-- gray/black stone floors. Only overlay a floor color when it
+					-- is visually distinct (for example Galena purple).
+					if floorCol
+					and floorCol ~= blockedCol
+					and floorCol ~= freeCol
+					and floorCol ~= blitTab[colors.black] then
+						pixelCol = floorCol
+					end
 				end
 			end
 			if not pixelCol then
