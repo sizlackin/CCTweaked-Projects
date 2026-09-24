@@ -25,4 +25,4 @@ for _, path in ipairs(targets) do
   print("Patched " .. path)
 end
 
-print("Area preview + CONFIRM enabled. Reboot the controller.")
+print("Area preview + bottom RESELECT/CONFIRM controls enabled. Reboot the controller.")
