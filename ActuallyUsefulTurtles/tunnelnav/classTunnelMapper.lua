@@ -253,15 +253,27 @@ function Mapper:mapNetwork(radius,maxCells)
 		end
 
 		if not frontier then
-			if reason == "no_frontier" then
+			if reason == "all_frontiers_claimed" then
+				-- LABENHANCED_MULTI_MAPPER_CLAIMS
+				-- Other turtles currently own the reachable frontier work.
+				-- Stay alive: their scans may expose new branches for us.
+				print("WAITING FOR AN UNCLAIMED FRONTIER")
+				sleep(1)
+			elseif reason == "no_frontier" then
 				stopReason = "all reachable frontiers mapped"
 				print("NO UNMAPPED TUNNEL FRONTIERS REMAIN IN RANGE")
+				break
 			else
 				stopReason = "controller link unavailable: "..tostring(reason or "unknown")
 				print("MAPPER PAUSED:",stopReason)
+				break
 			end
-			break
 		end
+
+		if not frontier then
+			-- Claimed-work wait path: retry the outer loop.
+			sleep(0)
+		else
 
 		local pathReady = true
 		if frontier.path and #frontier.path > 0 then
@@ -300,7 +312,10 @@ function Mapper:mapNetwork(radius,maxCells)
 
 				-- Known road: travel only. No inspect/turn/resurvey here.
 				-- This is the Google-Maps-like fast-travel behavior.
-				if i % 32 == 0 then sleep(0) end
+				if i % 24 == 0 then
+					nav:renewFrontier(frontier)
+					sleep(0)
+				end
 			end
 
 			if pathReady then
@@ -314,6 +329,7 @@ function Mapper:mapNetwork(radius,maxCells)
 		and m.pos.x == frontier.source.x
 		and m.pos.y == frontier.source.y
 		and m.pos.z == frontier.source.z then
+			nav:renewFrontier(frontier)
 			local target = vector.new(frontier.target.x,frontier.target.y,frontier.target.z)
 			local ok,moveReason,blockName = nav:moveAdjacent(target)
 
@@ -346,6 +362,7 @@ function Mapper:mapNetwork(radius,maxCells)
 			end
 		end
 
+		end -- frontier exists
 		sleep(0)
 	end
 
