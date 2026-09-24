@@ -1245,7 +1245,7 @@ function Miner:queueTunnelUpdate(pos,dir,state,opts)
 		dir=dir,
 		state=state,
 		seen=opts.seen or os.epoch("utc"),
-		until=opts.until,
+		blockedUntil=opts.blockedUntil,
 		resume=opts.resume,
 	}
 	local index = self.tunnelPendingIndex[key]
