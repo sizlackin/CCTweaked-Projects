@@ -1303,6 +1303,11 @@ function Miner:recordTunnelTraversal(fromPos,toPos)
 	local dir = TunnelMap.directionBetween(fromPos,toPos)
 	if dir then
 		self:queueTunnelUpdate(fromPos,dir,TunnelMap.STATE.OPEN)
+		-- Batch normal task/mining travel so the controller learns new road
+		-- segments without a modem message or disk write for every single move.
+		if #self.tunnelPendingUpdates >= 24 then
+			self:flushTunnelUpdatesSync()
+		end
 	end
 end
 
