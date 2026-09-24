@@ -7,6 +7,9 @@ local ChunkyMap = require("classChunkyMap")
 local TaskQueue = require("classTaskQueue")
 local bluenet = require("bluenet")
 local MinerTaskAssignment = require("classMinerTaskAssignment")
+local TunnelMap = require("classTunnelMap") -- LABENHANCED_TUNNEL_NAV
+local TunnelNavigator = require("classTunnelNavigator")
+local TunnelMapper = require("classTunnelMapper")
 local config = config
 
 -- local blockTranslation = require("blockTranslation")
@@ -199,7 +202,7 @@ function Miner:new()
 	setmetatable(o,self)
 
 	print("----INITIALIZING----")
-	print("LabEnhanced miner: four-turtle shared smart-access v7")
+	print("LabEnhanced miner: shared tunnel-navigation v8")
 	assert(turtle,"this device is not a turtle")
 	
 	o.fuelLimit = turtle.getFuelLimit()
@@ -229,6 +232,12 @@ function Miner:new()
 	o.philoliteRepairCells = nil
 	o.philoliteRepairPending = false
 	o.activeMiningBounds = nil
+
+	-- Controller-authoritative tunnel-road navigation.
+	o.tunnelPendingUpdates = {}
+	o.tunnelPendingIndex = {}
+	o.tunnelNavigator = TunnelNavigator:new(o)
+	o.tunnelMapper = TunnelMapper:new(o)
 	
 	o:initialize() -- initialize after starting parallel tasks in startup.lua
 	--print("--------------------")
@@ -362,6 +371,7 @@ function Miner:initOrientation()
 		-- go back without requesting a chunk --self:back()
 		if turtle.back() then 
 			self.pos = self.pos - self.vectors[self.orientation]
+		self:recordTunnelTraversal(tunnelFrom,self.pos)
 		end
 		
 		self:turnTo((self.orientation+turns)%4)
@@ -1222,6 +1232,81 @@ end
 
 
 
+-- LABENHANCED_TUNNEL_NAV
+-- Compact edge updates are queued locally and piggyback on the existing state
+-- stream. Strict navigation can flush them synchronously before requesting a
+-- fresh controller route.
+function Miner:queueTunnelUpdate(pos,dir,state,opts)
+	if not pos or not dir or not state then return false end
+	opts = opts or {}
+	local key = TunnelMap.key(pos).."|"..dir
+	local update = {
+		pos={x=pos.x,y=pos.y,z=pos.z},
+		dir=dir,
+		state=state,
+		seen=opts.seen or os.epoch("utc"),
+		until=opts.until,
+		resume=opts.resume,
+	}
+	local index = self.tunnelPendingIndex[key]
+	if index then
+		self.tunnelPendingUpdates[index] = update
+	else
+		self.tunnelPendingUpdates[#self.tunnelPendingUpdates+1] = update
+		self.tunnelPendingIndex[key] = #self.tunnelPendingUpdates
+	end
+	return true
+end
+
+function Miner:drainTunnelUpdates(maxCount)
+	maxCount = maxCount or #self.tunnelPendingUpdates
+	local count = math.min(maxCount,#self.tunnelPendingUpdates)
+	if count <= 0 then return {} end
+
+	local out = {}
+	for i=1,count do out[i] = self.tunnelPendingUpdates[i] end
+
+	local remaining = {}
+	local index = {}
+	for i=count+1,#self.tunnelPendingUpdates do
+		local u = self.tunnelPendingUpdates[i]
+		remaining[#remaining+1] = u
+		index[TunnelMap.key(u.pos).."|"..u.dir] = #remaining
+	end
+	self.tunnelPendingUpdates = remaining
+	self.tunnelPendingIndex = index
+	return out
+end
+
+function Miner:requeueTunnelUpdates(updates)
+	if not updates then return end
+	for _,u in ipairs(updates) do
+		self:queueTunnelUpdate(u.pos,u.dir,u.state,u)
+	end
+end
+
+function Miner:flushTunnelUpdatesSync()
+	if not self.tunnelNavigator then return false end
+	while #self.tunnelPendingUpdates > 0 do
+		local batch = self:drainTunnelUpdates(128)
+		local ok = self.tunnelNavigator:sendUpdates(batch)
+		if not ok then
+			self:requeueTunnelUpdates(batch)
+			return false
+		end
+	end
+	return true
+end
+
+function Miner:recordTunnelTraversal(fromPos,toPos)
+	if not fromPos or not toPos then return end
+	local dir = TunnelMap.directionBetween(fromPos,toPos)
+	if dir then
+		self:queueTunnelUpdate(fromPos,dir,TunnelMap.STATE.OPEN)
+	end
+end
+
+
 function Miner:setMapValue(x,y,z,value)
 	--self.map:logData(x,y,z,value)
 	self.map:setData(x,y,z,value,true)
@@ -1303,11 +1388,13 @@ function Miner:updateLookingAt()
 end
 
 function Miner:forward()
+	local tunnelFrom = vector.new(self.pos.x,self.pos.y,self.pos.z)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local result = turtle.forward()
 	if result then
 		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
 		self.pos = self.pos + self.vectors[self.orientation]
+		self:recordTunnelTraversal(tunnelFrom,self.pos)
 		if self.veinRecording and self.veinTrace then
 			table.insert(self.veinTrace, vector.new(self.pos.x,self.pos.y,self.pos.z))
 		end
@@ -1320,6 +1407,7 @@ function Miner:forward()
 end
 
 function Miner:back()
+	local tunnelFrom = vector.new(self.pos.x,self.pos.y,self.pos.z)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local result = turtle.back()
 	if result then
@@ -1335,11 +1423,13 @@ function Miner:back()
 end
 
 function Miner:up()
+	local tunnelFrom = vector.new(self.pos.x,self.pos.y,self.pos.z)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local result = turtle.up()
 	if result then
 		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
 		self.pos.y = self.pos.y + 1
+		self:recordTunnelTraversal(tunnelFrom,self.pos)
 		if self.veinRecording and self.veinTrace then
 			table.insert(self.veinTrace, vector.new(self.pos.x,self.pos.y,self.pos.z))
 		end
@@ -1350,11 +1440,13 @@ function Miner:up()
 end
 
 function Miner:down()
+	local tunnelFrom = vector.new(self.pos.x,self.pos.y,self.pos.z)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local result = turtle.down()
 	if result then
 		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
 		self.pos.y = self.pos.y - 1
+		self:recordTunnelTraversal(tunnelFrom,self.pos)
 		if self.veinRecording and self.veinTrace then
 			table.insert(self.veinTrace, vector.new(self.pos.x,self.pos.y,self.pos.z))
 		end
@@ -2023,7 +2115,7 @@ function Miner:cleanupVeinTrace(startPos, startOrientation)
 	return result and self.pos == startPos
 end
 
-function Miner:navigateOpenPathToPos(x,y,z)
+function Miner:navigateKnownAirBootstrap(x,y,z)
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local goal = vector.new(x,y,z)
 	local wasRecording = self.veinRecording
@@ -2064,6 +2156,29 @@ function Miner:navigateOpenPathToPos(x,y,z)
 	return result and self.pos == goal
 end
 
+
+function Miner:navigateOpenPathToPos(x,y,z)
+	local goal = vector.new(x,y,z)
+	if self.pos == goal then return true end
+
+	if self.tunnelNavigator then
+		local ok,reason,stats = self.tunnelNavigator:navigateTo(goal)
+		if ok then return true end
+
+		-- Bootstrap compatibility only: before the first tunnel survey, the
+		-- authoritative graph has zero road nodes. The previous map A* is still
+		-- strictly no-dig, so it is safe to use until a road graph exists.
+		if stats and stats.nodes == 0 then
+			print("TUNNEL GRAPH EMPTY - USING KNOWN-AIR BOOTSTRAP")
+			return self:navigateKnownAirBootstrap(x,y,z)
+		end
+
+		print("NO VALID TUNNEL ROUTE - REFUSING TO DIG")
+		return false
+	end
+
+	return self:navigateKnownAirBootstrap(x,y,z)
+end
 
 -- LABENHANCED_CONTAINED_MINING
 -- mineArea is constrained to its assigned X/Z rectangle. Y is intentionally
@@ -3559,197 +3674,14 @@ end
 
 
 -- LABENHANCED_TUNNEL_REMAP
--- Non-destructively rebuild the map by physically walking connected, same-level
--- open tunnels. This routine NEVER calls dig/digUp/digDown. It records the real
--- world with turtle.inspect(), backtracks along the exact route it travelled,
--- and finishes at the position/orientation where it started.
-function Miner:remapTunnels(radius, maxCells)
-	radius = tonumber(radius) or 256
-	maxCells = tonumber(maxCells) or 2500
-	radius = math.max(8, math.min(radius, 512))
-	maxCells = math.max(16, math.min(maxCells, 10000))
+-- Compatibility entry point used by the existing start-tunnel-remap scripts.
+-- The v8 implementation delegates to the controller-authoritative Mapper.
+function Miner:remapTunnels(radius,maxCells)
+	return self.tunnelMapper:mapNetwork(radius,maxCells)
+end
 
-	local currentTask = self:addCheckTask({"remapTunnels"})
-	local startPos = vector.new(self.pos.x, self.pos.y, self.pos.z)
-	local startOrientation = self.orientation
-	local baseY = self.pos.y
-	local radiusSq = radius * radius
-	local visited = {}
-	local scanned = 0
-	local stopExpanding = false
-	local lowFuel = false
-
-	local function key(pos)
-		return pos.x .. "," .. pos.y .. "," .. pos.z
-	end
-
-	local function inRange(pos)
-		if pos.y ~= baseY then return false end
-		local dx = pos.x - startPos.x
-		local dz = pos.z - startPos.z
-		return dx * dx + dz * dz <= radiusSq
-	end
-
-	local function blockName(hasBlock, data)
-		if hasBlock and type(data) == "table" then
-			return data.name
-		end
-		return 0
-	end
-
-	local function checkCancelled()
-		-- addCheckTask is the normal Miner cancellation checkpoint. Add/remove a
-		-- tiny step task so Options/Cancel can still stop a long remap safely.
-		local t = self:addCheckTask({"remapTunnelStep"})
-		self.taskList:remove(t)
-	end
-
-	local function rawMoveForward(dir)
-		self:turnTo(dir)
-		local oldPos = vector.new(self.pos.x, self.pos.y, self.pos.z)
-		if not turtle.forward() then
-			local hasBlock, data = turtle.inspect()
-			local target = oldPos + self.vectors[dir]
-			self:setMapValue(target.x, target.y, target.z, blockName(hasBlock, data))
-			return false
-		end
-
-		self:setMapValue(oldPos.x, oldPos.y, oldPos.z, 0)
-		self.pos = oldPos + self.vectors[dir]
-		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
-		self:updateLookingAt()
-		return true
-	end
-
-	local function scanCurrentCell()
-		-- Current cell is known air because the turtle physically occupies it.
-		self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
-
-		local hasUp, upData = turtle.inspectUp()
-		self:setMapValue(self.pos.x, self.pos.y + 1, self.pos.z, blockName(hasUp, upData))
-
-		local hasDown, downData = turtle.inspectDown()
-		self:setMapValue(self.pos.x, self.pos.y - 1, self.pos.z, blockName(hasDown, downData))
-
-		local originalOrientation = self.orientation
-		local dirs = {}
-
-		for dir = 0, 3 do
-			self:turnTo(dir)
-			local hasBlock, data = turtle.inspect()
-			local target = self.pos + self.vectors[dir]
-			self:setMapValue(target.x, target.y, target.z, blockName(hasBlock, data))
-
-			if not hasBlock and inRange(target) and not visited[key(target)] then
-				dirs[#dirs + 1] = dir
-			end
-			sleep(0)
-		end
-
-		self:turnTo(originalOrientation)
-
-		-- Only expand through cells which look like the lower half of a walkable
-		-- tunnel: air above and a physical floor below. We still record any
-		-- non-tunnel cell we step into, but do not fan out from it. This greatly
-		-- reduces accidental exploration of giant caves.
-		local tunnelLike = (not hasUp) and hasDown
-		return dirs, tunnelLike
-	end
-
-	print("NON-DESTRUCTIVE TUNNEL REMAP")
-	print("radius:", radius, "max cells:", maxCells)
-	print("Y level:", baseY)
-	print("NO BLOCKS WILL BE MINED")
-
-	visited[key(startPos)] = true
-	local stack = {
-		{
-			enteredDir = nil,
-			scanned = false,
-			dirs = nil,
-			nextDir = 1,
-			expandable = true,
-		}
-	}
-
-	while #stack > 0 do
-		checkCancelled()
-		local frame = stack[#stack]
-
-		if not frame.scanned then
-			frame.dirs, frame.expandable = scanCurrentCell()
-			frame.scanned = true
-			frame.nextDir = 1
-			scanned = scanned + 1
-
-			if scanned >= maxCells then
-				stopExpanding = true
-				print("REMAP CELL LIMIT REACHED - RETURNING TO START")
-			end
-		end
-
-		local descend = false
-		if not stopExpanding and frame.expandable then
-			while frame.nextDir <= #frame.dirs do
-				local dir = frame.dirs[frame.nextDir]
-				frame.nextDir = frame.nextDir + 1
-				local target = self.pos + self.vectors[dir]
-				local targetKey = key(target)
-
-				if inRange(target) and not visited[targetKey] then
-					local fuel = turtle.getFuelLevel()
-					if type(fuel) == "number" and fuel ~= "unlimited"
-					and fuel <= (#stack + 128) then
-						lowFuel = true
-						stopExpanding = true
-						print("LOW FUEL RESERVE - RETURNING TO START")
-						break
-					end
-
-					if rawMoveForward(dir) then
-						visited[targetKey] = true
-						stack[#stack + 1] = {
-							enteredDir = dir,
-							scanned = false,
-							dirs = nil,
-							nextDir = 1,
-							expandable = true,
-						}
-						descend = true
-						break
-					end
-				end
-			end
-		end
-
-		if not descend then
-			if #stack == 1 then
-				break
-			end
-
-			local enteredDir = frame.enteredDir
-			table.remove(stack)
-			local backDir = (enteredDir + 2) % 4
-			if not rawMoveForward(backDir) then
-				self:turnTo(startOrientation)
-				self.taskList:remove(currentTask)
-				error("TUNNEL REMAP BACKTRACK BLOCKED - REFUSING TO DIG", 0)
-			end
-		end
-
-		sleep(0)
-	end
-
-	self:turnTo(startOrientation)
-	self:setMapValue(self.pos.x, self.pos.y, self.pos.z, 0)
-	self.map:save()
-	self.taskList:remove(currentTask)
-
-	print("TUNNEL REMAP COMPLETE")
-	print("mapped cells:", scanned)
-	if lowFuel then print("stopped early because of fuel reserve") end
-	print("returned to start:", self.pos.x, self.pos.y, self.pos.z)
-	return true, scanned
+function Miner:mapTunnelNetwork(radius,maxCells)
+	return self.tunnelMapper:mapNetwork(radius,maxCells)
 end
 
 function Miner:recoverTurtle(id, pos)
