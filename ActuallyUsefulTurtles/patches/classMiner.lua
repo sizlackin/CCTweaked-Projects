@@ -237,7 +237,7 @@ function Miner:new()
 	o.tunnelPendingUpdates = {}
 	o.tunnelPendingIndex = {}
 	o.tunnelNavigator = TunnelNavigator:new(o)
-	o.tunnelMapper = TunnelMapper:new(o)
+	o.tunnelMapper = TunnelMapper:new(o, o.tunnelNavigator) -- LABENHANCED_MAPPER_NAV_FIX
 	
 	o:initialize() -- initialize after starting parallel tasks in startup.lua
 	--print("--------------------")
