@@ -41,6 +41,7 @@ local fuelItems = {
 -- LabEnhanced clean-mining patch:
 -- temporary ore-vein cavities are sealed with cobbled deepslate only.
 local veinBackfillItem = "minecraft:cobbled_deepslate"
+local philoliteBlockName = "create_unbreakable:philolite_block"
 -- do not translate
 
 -- blocks that can explicitly be mined, without making the world look destroyed
@@ -127,6 +128,7 @@ local disallowedBlocks = {
 -- }
 
 local oreBlocks = {
+["create_unbreakable:philolite_block"]=true,
 ["minecraft:iron_ore"]=true,
 ["minecraft:deepslate_iron_ore"]=true,
 ["minecraft:coal_ore"]=true,
@@ -197,7 +199,7 @@ function Miner:new()
 	setmetatable(o,self)
 
 	print("----INITIALIZING----")
-	print("LabEnhanced miner: clean-return + lava tunnel v2")
+	print("LabEnhanced miner: clean-return + lava + philolite repair v3")
 	assert(turtle,"this device is not a turtle")
 	
 	o.fuelLimit = turtle.getFuelLimit()
@@ -222,6 +224,10 @@ function Miner:new()
 	o.veinTrace = nil
 	o.veinExcavated = nil
 	o.veinRecording = false
+	o.activeTunnelAnchor = nil
+	o.activeTunnelOrientation = nil
+	o.philoliteRepairCells = nil
+	o.philoliteRepairPending = false
 	
 	o:initialize() -- initialize after starting parallel tasks in startup.lua
 	--print("--------------------")
@@ -1455,7 +1461,12 @@ function Miner:dig(side)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	self:updateLookingAt()
 	local target = vector.new(self.lookingAt.x,self.lookingAt.y,self.lookingAt.z)
+	local blockBefore = self:getMapValue(target.x,target.y,target.z)
+	if blockBefore == philoliteBlockName then
+		self:preparePhiloliteBlastRepair(target)
+	end
 	local result = turtle.dig(side)
+	if result and blockBefore == philoliteBlockName then sleep(0.4) end
 	if result then
 		if self.veinRecording and self.veinExcavated then
 			self.veinExcavated[target.x..","..target.y..","..target.z] = true
@@ -1472,7 +1483,12 @@ end
 function Miner:digUp(side)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local target = vector.new(self.pos.x,self.pos.y+1,self.pos.z)
+	local blockBefore = self:getMapValue(target.x,target.y,target.z)
+	if blockBefore == philoliteBlockName then
+		self:preparePhiloliteBlastRepair(target)
+	end
 	local result = turtle.digUp(side)
+	if result and blockBefore == philoliteBlockName then sleep(0.4) end
 	if result then
 		if self.veinRecording and self.veinExcavated then
 			self.veinExcavated[target.x..","..target.y..","..target.z] = true
@@ -1489,7 +1505,12 @@ end
 function Miner:digDown(side)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local target = vector.new(self.pos.x,self.pos.y-1,self.pos.z)
+	local blockBefore = self:getMapValue(target.x,target.y,target.z)
+	if blockBefore == philoliteBlockName then
+		self:preparePhiloliteBlastRepair(target)
+	end
 	local result = turtle.digDown(side)
+	if result and blockBefore == philoliteBlockName then sleep(0.4) end
 	if result then
 		if self.veinRecording and self.veinExcavated then
 			self.veinExcavated[target.x..","..target.y..","..target.z] = true
@@ -2606,6 +2627,204 @@ function Miner:mineArea(start, finish)
 end
 
 
+-- LABENHANCED_PHILOLITE_REPAIR
+-- Philolite explodes when broken. Before mining it, snapshot the solid shell
+-- surrounding the active 1x2 tunnel. After the blast, restore only shell blocks
+-- which were solid before the explosion. Existing intersections/openings remain open.
+local function philolitePosKey(pos)
+	return pos.x .. "," .. pos.y .. "," .. pos.z
+end
+
+function Miner:rememberPhiloliteShellCell(interior, shellPos, side)
+	local value = self:getMapValue(shellPos.x,shellPos.y,shellPos.z)
+	if value == nil or value == 0 then return end
+
+	self.philoliteRepairCells = self.philoliteRepairCells or {}
+	local key = philolitePosKey(interior)
+	local cell = self.philoliteRepairCells[key]
+	if not cell then
+		cell = {
+			pos = vector.new(interior.x,interior.y,interior.z),
+			sides = {},
+		}
+		self.philoliteRepairCells[key] = cell
+	end
+	cell.sides[side] = true
+end
+
+function Miner:capturePhiloliteTunnelShell(anchor, orientation)
+	if not anchor or orientation == nil then return end
+	local axis = self.vectors[orientation]
+	local left = self.vectors[(orientation-1)%4]
+	local right = self.vectors[(orientation+1)%4]
+
+	-- Explosion strength is large enough to damage several adjacent tunnel cells.
+	-- Snapshot a seven-block section centered on the active tunnel position.
+	for offset=-3,3 do
+		local p = anchor + axis * offset
+		self:rememberPhiloliteShellCell(p, p + vectorDown, "floor")
+		self:rememberPhiloliteShellCell(p, p + left, "leftLower")
+		self:rememberPhiloliteShellCell(p, p + right, "rightLower")
+		self:rememberPhiloliteShellCell(p, p + vectorUp * 2, "ceiling")
+		self:rememberPhiloliteShellCell(p, p + vectorUp + left, "leftUpper")
+		self:rememberPhiloliteShellCell(p, p + vectorUp + right, "rightUpper")
+	end
+end
+
+function Miner:preparePhiloliteBlastRepair(blastPos)
+	if self.activeTunnelAnchor and self.activeTunnelOrientation ~= nil then
+		self:capturePhiloliteTunnelShell(self.activeTunnelAnchor,self.activeTunnelOrientation)
+		self.philoliteRepairPending = true
+		print("PHILOLITE - tunnel repair queued")
+	end
+end
+
+function Miner:rawInspectAndRepair(direction, shouldRepair)
+	if not shouldRepair then return true end
+
+	local hasBlock, data
+	if direction == "up" then
+		hasBlock, data = turtle.inspectUp()
+	elseif direction == "down" then
+		hasBlock, data = turtle.inspectDown()
+	else
+		hasBlock, data = turtle.inspect()
+	end
+
+	if hasBlock and data and data.name ~= "minecraft:lava" then
+		return true
+	end
+
+	local ok
+	if direction == "up" then
+		ok = self:placeBlockUp(veinBackfillItem)
+	elseif direction == "down" then
+		ok = self:placeBlockDown(veinBackfillItem)
+	else
+		self:updateLookingAt()
+		ok = self:placeBlock(veinBackfillItem)
+	end
+	return ok == true
+end
+
+function Miner:repairPhiloliteShellCell(cell, orientation)
+	if not cell or self.pos ~= cell.pos then return false end
+	if not self:getTunnelMaterialSlot() then return false end
+
+	local sides = cell.sides or {}
+	local startOrientation = self.orientation
+
+	-- Lower tunnel cell: floor and side walls.
+	self:rawInspectAndRepair("down", sides.floor)
+
+	self:turnTo(orientation-1)
+	self:rawInspectAndRepair("front", sides.leftLower)
+	self:turnTo(orientation+1)
+	self:rawInspectAndRepair("front", sides.rightLower)
+	self:turnTo(orientation)
+
+	-- Keep the upper interior cell open. Explosion debris/falling blocks should
+	-- not turn a 1x2 tunnel back into 1x1.
+	local hasAbove, aboveData = turtle.inspectUp()
+	if hasAbove then
+		local aboveName = aboveData and aboveData.name
+		if aboveName == "minecraft:lava" then
+			local placed = self:placeBlockUp(veinBackfillItem)
+			if placed then
+				turtle.digUp()
+				self:setMapValue(self.pos.x,self.pos.y+1,self.pos.z,0)
+			end
+		elseif aboveName and not checkDisallowed(aboveName) then
+			if turtle.digUp() then
+				self:setMapValue(self.pos.x,self.pos.y+1,self.pos.z,0)
+			end
+		end
+	end
+
+	-- Move into the upper interior without triggering refuel/offload checks.
+	local lower = vector.new(self.pos.x,self.pos.y,self.pos.z)
+	if turtle.up() then
+		self:setMapValue(lower.x,lower.y,lower.z,0)
+		self.pos.y = self.pos.y + 1
+		self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+
+		self:turnTo(orientation-1)
+		self:rawInspectAndRepair("front", sides.leftUpper)
+		self:turnTo(orientation+1)
+		self:rawInspectAndRepair("front", sides.rightUpper)
+		self:turnTo(orientation)
+		self:rawInspectAndRepair("up", sides.ceiling)
+
+		if turtle.down() then
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+			self.pos.y = self.pos.y - 1
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+		else
+			print("PHILOLITE REPAIR: unable to return to lower tunnel cell")
+			self:turnTo(startOrientation)
+			return false
+		end
+	end
+
+	self:turnTo(startOrientation)
+	return true
+end
+
+function Miner:repairPhiloliteBlastDamage()
+	if not self.philoliteRepairPending then return true end
+	local cells = self.philoliteRepairCells
+	if not cells then
+		self.philoliteRepairPending = false
+		return true
+	end
+
+	if not self:getTunnelMaterialSlot() then
+		print("PHILOLITE BLAST - NO COBBLED DEEPSLATE FOR REPAIR")
+		self.philoliteRepairCells = nil
+		self.philoliteRepairPending = false
+		return false
+	end
+
+	local returnPos = vector.new(self.pos.x,self.pos.y,self.pos.z)
+	local returnOrientation = self.orientation
+	local orientation = self.activeTunnelOrientation or returnOrientation
+	local list = {}
+
+	for _,cell in pairs(cells) do
+		-- Repair only cells which are currently known as tunnel air. This avoids
+		-- digging into untouched rock merely to reach a damaged shell section.
+		if self:getMapValue(cell.pos.x,cell.pos.y,cell.pos.z) == 0 then
+			table.insert(list,cell)
+		end
+	end
+
+	table.sort(list,function(a,b)
+		local da = math.abs(a.pos.x-returnPos.x)+math.abs(a.pos.y-returnPos.y)+math.abs(a.pos.z-returnPos.z)
+		local db = math.abs(b.pos.x-returnPos.x)+math.abs(b.pos.y-returnPos.y)+math.abs(b.pos.z-returnPos.z)
+		return da < db
+	end)
+
+	local repaired = 0
+	for _,cell in ipairs(list) do
+		if self.pos == cell.pos or self:navigateOpenPathToPos(cell.pos.x,cell.pos.y,cell.pos.z) then
+			if self:repairPhiloliteShellCell(cell,orientation) then
+				repaired = repaired + 1
+			end
+		end
+	end
+
+	if self.pos ~= returnPos then
+		self:navigateOpenPathToPos(returnPos.x,returnPos.y,returnPos.z)
+	end
+	self:turnTo(returnOrientation)
+
+	print("PHILOLITE REPAIR:",repaired,"tunnel cells checked")
+	self.philoliteRepairCells = nil
+	self.philoliteRepairPending = false
+	return true
+end
+
+
 -- LABENHANCED_LAVA_TUNNEL
 -- Keep a one-wide, two-high corridor usable when a strip tunnel crosses lava.
 -- Cobbled deepslate is only placed where lava directly touches the corridor;
@@ -2736,6 +2955,11 @@ function Miner:tunnel(length, direction, noInspect)
 	
 	local expectedEndPos = self.pos + directionVector * length
 	local startOrientation = self.orientation
+	local previousTunnelAnchor = self.activeTunnelAnchor
+	local previousTunnelOrientation = self.activeTunnelOrientation
+	if not direction or direction == "straight" then
+		self.activeTunnelOrientation = startOrientation
+	end
 
 	self:addProgressLevel("tunnel", length, "Blocks") -- Remove later?
 	
@@ -2743,7 +2967,13 @@ function Miner:tunnel(length, direction, noInspect)
 	for i=1,length do
 		if skipSteps == 0 then 
 		
-			if not noInspect then self:inspectMine() end
+			if not direction or direction == "straight" then
+				self.activeTunnelAnchor = vector.new(self.pos.x,self.pos.y,self.pos.z)
+			end
+			if not noInspect then
+				self:inspectMine()
+				self:repairPhiloliteBlastDamage()
+			end
 			if (not direction or direction == "straight") then
 				self:displaceLavaAhead()
 			end
@@ -2777,12 +3007,17 @@ function Miner:tunnel(length, direction, noInspect)
 				self:digUp()
 			end
 			self:maintainLavaTunnel()
+			self:repairPhiloliteBlastDamage()
 		end
 
 		self:updateProgress("tunnel", i)
 	end
 	
-	if not noInspect then self:inspectMine() end
+	if not noInspect then
+		self.activeTunnelAnchor = vector.new(self.pos.x,self.pos.y,self.pos.z)
+		self:inspectMine()
+		self:repairPhiloliteBlastDamage()
+	end
 	
 	if self.pos ~= expectedEndPos then
 		-- Only recover through known open tunnel cells. Never drill a 1x1
@@ -2796,6 +3031,8 @@ function Miner:tunnel(length, direction, noInspect)
 		self:turnTo(startOrientation)
 	end
 	
+	self.activeTunnelAnchor = previousTunnelAnchor
+	self.activeTunnelOrientation = previousTunnelOrientation
 	self.taskList:remove(currentTask)
 	
 	if not result then error("TUNNEL FAIL", 0) end
