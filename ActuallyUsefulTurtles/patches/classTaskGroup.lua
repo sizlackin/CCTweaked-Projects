@@ -443,11 +443,59 @@ function TaskGroup:assignAreas(areas)
 	if count < #areas then 
 		print("more areas than available turtles")
 	end
+
+	-- LABENHANCED_SHARED_MINE_ENTRANCE
+	-- For a paired mineArea job, turtle #1 creates ONE shared 1x2 access tunnel.
+	-- Turtle #2 waits for that route, follows it, then steps into its adjacent
+	-- stripe inside the selected green area. This prevents two separate approach
+	-- tunnels from being carved from home/the existing tunnel network.
+	local pairedAccess = nil
+	if self.taskName == "mineArea" and #areas == 2 and self.area and turtles[1] then
+		local a1, a2 = areas[1], areas[2]
+		local leaderPos = turtles[1].state and turtles[1].state.pos
+		local minY = math.min(self.area.start.y,self.area.finish.y)
+
+		if a1.finish.x < a2.start.x then
+			-- West/east stripes. Both span the full Z length, so enter from
+			-- whichever Z edge is closer to the leader and split at the seam.
+			local minZ = math.min(self.area.start.z,self.area.finish.z)
+			local maxZ = math.max(self.area.start.z,self.area.finish.z)
+			local edgeZ = minZ
+			if leaderPos and math.abs(leaderPos.z-maxZ) < math.abs(leaderPos.z-minZ) then
+				edgeZ = maxZ
+			end
+			pairedAccess = {
+				leader = vector.new(a1.finish.x,minY,edgeZ),
+				follower = vector.new(a2.start.x,minY,edgeZ),
+			}
+		elseif a1.finish.z < a2.start.z then
+			-- North/south stripes. Both span the full X length, so enter from
+			-- whichever X edge is closer to the leader and split at the seam.
+			local minX = math.min(self.area.start.x,self.area.finish.x)
+			local maxX = math.max(self.area.start.x,self.area.finish.x)
+			local edgeX = minX
+			if leaderPos and math.abs(leaderPos.x-maxX) < math.abs(leaderPos.x-minX) then
+				edgeX = maxX
+			end
+			pairedAccess = {
+				leader = vector.new(edgeX,minY,a1.finish.z),
+				follower = vector.new(edgeX,minY,a2.start.z),
+			}
+		end
+	end
+
 	for i,area in ipairs(areas) do
 		local turtleId = turtles[i].state.id
 		local task = self:createTask(turtleId)
 		print("created", task.shortId, "for turtle", turtleId, "area", area.start.x, area.start.y, area.start.z, area.finish.x, area.finish.y, area.finish.z)
 		task:setArea(area.start, area.finish)
+
+		if pairedAccess then
+			task:setVar("sharedAccessEntry", pairedAccess.leader)
+			task:setVar("accessEntry", i == 1 and pairedAccess.leader or pairedAccess.follower)
+			task:setVar("accessLeader", i == 1)
+			task:setVar("sharedAccessGroup", self.id)
+		end
 	end
 	return self.tasks
 end
