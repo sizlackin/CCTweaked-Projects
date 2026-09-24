@@ -316,17 +316,18 @@ function TaskGroupSelector:showAreaPreview()
 	}
 	table.insert(self.mapDisplay.areas, self.selectionPreview)
 
-	-- Keep the map open so the selected rectangle can be reviewed. Put both
-	-- actions together below the top controls, away from the status text and
-	-- zoom controls along the bottom edge.
-	local mapWidth = self.mapDisplay:getWidth()
+	-- Keep the map open so the selected rectangle can be reviewed. Centre both
+	-- actions in the top bar between the up arrow and the close button.
 	local reselectWidth = 10
 	local confirmWidth = 10
 	local buttonGap = 1
-	local controlsY = 4
-	local controlsRight = mapWidth - 4
-	local confirmX = math.max(1, controlsRight - confirmWidth + 1)
-	local reselectX = math.max(1, confirmX - buttonGap - reselectWidth)
+	local controlsWidth = reselectWidth + buttonGap + confirmWidth
+	local controlsLeft = self.mapDisplay.btnUp.x + self.mapDisplay.btnUp.width
+	local controlsRight = self.mapDisplay.btnClose.x - 1
+	local availableWidth = controlsRight - controlsLeft + 1
+	local reselectX = controlsLeft + math.floor((availableWidth - controlsWidth) / 2)
+	local confirmX = reselectX + reselectWidth + buttonGap
+	local controlsY = 2
 
 	self.btnReselectArea = Button:new(
 		"RESELECT",
