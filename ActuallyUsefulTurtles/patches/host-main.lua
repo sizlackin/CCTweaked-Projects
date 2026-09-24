@@ -428,6 +428,10 @@ node.onRequestAnswer = function(forMsg)
 					stats=stats,
 				}})
 			else
+				if stats and stats.temporaryBlocks and stats.temporaryBlocks > 0
+				and (reason == "no_route" or reason == nil) then
+					reason = "no_route_temp"
+				end
 				node:answer(forMsg, {"TUNNEL_ROUTE_FAILED", reason or "no_route", stats})
 			end
 		end
