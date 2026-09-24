@@ -39,7 +39,27 @@ function Mapper:surveyCurrent(existingNode)
 
 	m:setMapValue(pos.x,pos.y,pos.z,0)
 
+	-- Inspect the floor first. If this node is part of a vertical shaft (air
+	-- below plus an already-open vertical edge), do not fan out through the
+	-- upper/head-space layer of nearby 2-high tunnels.
+	local downConn = known and known.down
+	local hasDown,downData = turtle.inspectDown()
+	if hasDown then
+		m:setMapValue(pos.x,pos.y-1,pos.z,downData and downData.name or "unknown:block")
+		if not downConn or downConn.state ~= TunnelMap.STATE.OPEN then
+			self:_queue(pos,"down",TunnelMap.STATE.BLOCKED)
+		end
+	elseif not downConn or downConn.state ~= TunnelMap.STATE.OPEN then
+		m:setMapValue(pos.x,pos.y-1,pos.z,0)
+		self:_queue(pos,"down",TunnelMap.STATE.UNMAPPED)
+	end
+
+	local upKnown = known and known.up and known.up.state == TunnelMap.STATE.OPEN
+	local downKnown = downConn and downConn.state == TunnelMap.STATE.OPEN
+	local verticalTransit = (not hasDown) and (upKnown or downKnown)
+
 	-- Horizontal road candidates.
+	if not verticalTransit then
 	for _,entry in ipairs(horizontal) do
 		local conn = known and known[entry.name]
 		local state = conn and conn.state
@@ -60,20 +80,8 @@ function Mapper:surveyCurrent(existingNode)
 		end
 		sleep(0)
 	end
-	m:turnTo(originalOrientation)
-
-	-- Floor. A missing floor is a meaningful downward route candidate.
-	local downConn = known and known.down
-	local hasDown,downData = turtle.inspectDown()
-	if hasDown then
-		m:setMapValue(pos.x,pos.y-1,pos.z,downData and downData.name or "unknown:block")
-		if not downConn or downConn.state ~= TunnelMap.STATE.OPEN then
-			self:_queue(pos,"down",TunnelMap.STATE.BLOCKED)
-		end
-	elseif not downConn or downConn.state ~= TunnelMap.STATE.OPEN then
-		m:setMapValue(pos.x,pos.y-1,pos.z,0)
-		self:_queue(pos,"down",TunnelMap.STATE.UNMAPPED)
 	end
+	m:turnTo(originalOrientation)
 
 	-- Up needs special handling because every normal 2-high tunnel has air
 	-- immediately above the lower travel cell. Probe one block higher without
@@ -170,7 +178,8 @@ function Mapper:mapNetwork(radius,maxCells)
 				-- Successful movement queued the OPEN edge. Flush it, then
 				-- survey only this newly reached node.
 				m:flushTunnelUpdatesSync()
-				self:surveyCurrent(nil)
+				local reachedNode = nav:requestNode(m.pos)
+				self:surveyCurrent(reachedNode)
 
 				if mapped % 25 == 0 then
 					local s = nav:requestStats()
