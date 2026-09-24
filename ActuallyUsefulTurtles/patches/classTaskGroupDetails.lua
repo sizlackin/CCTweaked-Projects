@@ -75,7 +75,7 @@ function GroupDetails:openMap()
 end
 
 function GroupDetails:openOptions()
-	local choices = { "call home", "reboot" }
+	local choices = { "call home", "remap tunnels", "reboot" }
 	if self.group:isResumable() then 
 		table.insert(choices,1,"resume task")
 	end
@@ -84,6 +84,8 @@ function GroupDetails:openOptions()
 	choiceSelector.onChoiceSelected = function(choice)
 		if choice == "call home" then
 			self:callHome()
+		elseif choice == "remap tunnels" then
+			self:remapTunnels()
 		elseif choice == "reboot" then
 			self.group:reboot()
 		elseif choice == "resume task" then
@@ -98,6 +100,38 @@ end
 
 function GroupDetails:callHome()
 	self.group:addTaskToTurtles("returnHome",{})
+end
+
+-- LABENHANCED_TUNNEL_REMAP_UI
+-- Use one turtle only so scanners cannot collide. Lowest computer ID is
+-- normally DTX-001 in this setup.
+function GroupDetails:remapTunnels()
+	local count, turtles = self.group:getAssignedTurtles()
+	if not turtles or #turtles == 0 then
+		print("NO TURTLES ASSIGNED TO THIS GROUP")
+		return false
+	end
+
+	table.sort(turtles, function(a,b)
+		return (a.state and a.state.id or math.huge) < (b.state and b.state.id or math.huge)
+	end)
+
+	local turt = turtles[1]
+	local id = turt and turt.state and turt.state.id
+	if not id then
+		print("NO VALID TURTLE FOR REMAP")
+		return false
+	end
+
+	local current = self.group.taskManager:getCurrentTurtleTask(id)
+	if current and current.status == "running" then
+		print("TURTLE", id, "IS BUSY - CALL HOME FIRST")
+		return false
+	end
+
+	print("starting non-destructive tunnel remap on turtle", id)
+	local task = self.group.taskManager:addTaskToTurtle(id, "remapTunnels", {256, 2500})
+	return task ~= nil
 end
 
 local turtleListY = 15
