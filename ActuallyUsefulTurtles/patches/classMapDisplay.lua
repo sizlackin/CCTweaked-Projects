@@ -17,12 +17,18 @@ unknownColor = colors.black,
 freeColor = colors.lightGray,
 blockedColor = colors.gray,
 disallowedColor = colors.red,
-buttonColor = colors.lightBlue,
 turtleColor = colors.blue,
 aboveColor = colors.purple,
 belowColor = colors.orange,
 homeColor = colors.magenta,
 circleRadius = 16 * 16, -- render distance of 16 chunks
+-- Chrome theme: ghost-filled adjustment buttons, color-coded per cluster so
+-- level/zoom aren't confused (both use bare +/- glyphs). LABENHANCED_MAP_UI_THEME
+chromeColor = colors.black,
+panBorderColor = colors.cyan,
+levelBorderColor = colors.yellow,
+zoomBorderColor = colors.lime,
+checkboxTextColor = colors.lightGray,
 }
 
 local blitTab = BasicWindow.blitTab
@@ -88,26 +94,39 @@ function MapDisplay:initialize()
 	self.btnClose = Button:new("X",self.width-2,1,3,3,colors.red)
 	self.btnClose.click = function() return self:close() end
 
-	self.btnLeft = Button:new("<",1,self.midHeight,3,3,default.buttonColor)
-	self.btnRight = Button:new(">",self.width-2,self.midHeight,3,3,default.buttonColor)
-	self.btnUp = Button:new("^",self.midWidth,1,3,3,default.buttonColor)
-	self.btnDown = Button:new("v",self.midWidth,self.height-2,3,3,default.buttonColor)
-	
-	self.btnLevelDown= Button:new("-",1,1,3,3,default.buttonColor)
-	self.lblLevel = Label:new("Level", 4,1)
-	self.lblY = Label:new(self.mapMidY, 5,2)
-	self.btnLevelUp = Button:new("+",9,1,3,3,default.buttonColor)
-	self.lblX = Label:new("X  " .. self.mapMidX, 1,4)
-	self.lblZ = Label:new("Z  " .. self.mapMidZ, 1,5)
-	
-	self.btnZoomOut = Button:new("-",self.width-2,self.height-2,3,3,default.buttonColor)
-	self.btnZoomIn = Button:new("+",self.width-2,self.height-6,3,3,default.buttonColor)
-	self.lblZoom = Label:new(self.zoomLevel..":"..self.zoomBase, self.width-2, self.height-3)
+	self.btnLeft = Button:new("<",1,self.midHeight,3,3,default.chromeColor)
+	self.btnLeft:setBorderColor(default.panBorderColor)
+	self.btnRight = Button:new(">",self.width-2,self.midHeight,3,3,default.chromeColor)
+	self.btnRight:setBorderColor(default.panBorderColor)
+	self.btnUp = Button:new("^",self.midWidth,1,3,3,default.chromeColor)
+	self.btnUp:setBorderColor(default.panBorderColor)
+	self.btnDown = Button:new("v",self.midWidth,self.height-2,3,3,default.chromeColor)
+	self.btnDown:setBorderColor(default.panBorderColor)
+
+	self.btnLevelDown= Button:new("-",1,1,3,3,default.chromeColor)
+	self.btnLevelDown:setBorderColor(default.levelBorderColor)
+	self.lblLevel = Label:new("Level", 4,1, default.levelBorderColor, default.chromeColor)
+	self.lblY = Label:new(self.mapMidY, 5,2, default.levelBorderColor, default.chromeColor)
+	self.btnLevelUp = Button:new("+",9,1,3,3,default.chromeColor)
+	self.btnLevelUp:setBorderColor(default.levelBorderColor)
+	self.lblX = Label:new("X  " .. self.mapMidX, 1,4, nil, default.chromeColor)
+	self.lblZ = Label:new("Z  " .. self.mapMidZ, 1,5, nil, default.chromeColor)
+
+	self.btnZoomOut = Button:new("-",self.width-2,self.height-2,3,3,default.chromeColor)
+	self.btnZoomOut:setBorderColor(default.zoomBorderColor)
+	self.btnZoomIn = Button:new("+",self.width-2,self.height-6,3,3,default.chromeColor)
+	self.btnZoomIn:setBorderColor(default.zoomBorderColor)
+	self.lblZoom = Label:new(self.zoomLevel..":"..self.zoomBase, self.width-2, self.height-3, default.zoomBorderColor, default.chromeColor)
 	self.btnTurtles = CheckBox:new(1,self.height-2,"turtles",self.displayTurtles,nil,nil,self.backgroundColor)
+	self.btnTurtles:setTextColor(default.checkboxTextColor)
 	self.btnHome = CheckBox:new(1,self.height-1,"home",self.displayHome,nil,nil,self.backgroundColor)
+	self.btnHome:setTextColor(default.checkboxTextColor)
 	self.btnCircle = CheckBox:new(1,self.height, "128/256 circles",self.displayChunkCircle,nil,nil,self.backgroundColor)
+	self.btnCircle:setTextColor(default.checkboxTextColor)
 	self.btnFloorColors = CheckBox:new(1,self.height-4, "floor colors",self.displayFloorColors,nil,nil,self.backgroundColor)
+	self.btnFloorColors:setTextColor(default.checkboxTextColor)
 	self.btnFocusPocket = CheckBox:new(1,self.height-3, "live pos",self.focusPocket,nil,nil,self.backgroundColor)
+	self.btnFocusPocket:setTextColor(default.checkboxTextColor)
 
 
 	-- self == MapDisplay not button!
