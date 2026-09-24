@@ -25,10 +25,9 @@ local function isTurtleBlock(name)
 end
 
 local function isTunnelDecoration(name)
-	return name == "minecraft:torch"
-		or name == "minecraft:wall_torch"
-		or name == "minecraft:soul_torch"
-		or name == "minecraft:soul_wall_torch"
+	-- LABENHANCED_TORCH_BYPASS_V2
+	return type(name) == "string"
+		and string.match(string.lower(name), ":.*torch$") ~= nil
 end
 
 Navigator.isTunnelDecoration = isTunnelDecoration -- LABENHANCED_TORCH_BYPASS
