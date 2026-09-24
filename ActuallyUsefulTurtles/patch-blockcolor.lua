@@ -1,35 +1,47 @@
--- Fixes CC:Tweaked "Too long without yielding" during turtle startup.
--- Run this ON THE HOST/CONTROLLER computer.
-local url = "https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/patches/blockColor.lua"
-local target = "general/blockColor.lua"
+-- Fix Actually Useful Turtles startup crash: "Too long without yielding"
+-- Run on the HOST/controller computer, not on a turtle.
 
-if not fs.isDir("general") or not fs.isDir("turtle") then
-    error("Run this on the mining controller/host.", 0)
+local sourcePath = "general/blockColor.lua"
+if not fs.exists(sourcePath) then
+    error("general/blockColor.lua not found. Run this on the host/controller.", 0)
 end
 
-local response, err = http.get(url)
-if not response then error("Download failed: " .. tostring(err), 0) end
-if response.getResponseCode() ~= 200 then
-    local code = response.getResponseCode()
-    response.close()
-    error("Download failed: HTTP " .. tostring(code), 0)
-end
-
-local data = response.readAll()
-response.close()
-if #data < 1000 then error("Downloaded patch looks incomplete.", 0) end
-
-local temp = target .. ".download"
-local f = assert(fs.open(temp, "w"))
-f.write(data)
+local f = assert(fs.open(sourcePath, "r"))
+local data = f.readAll()
 f.close()
-if fs.exists(target) then fs.delete(target) end
-fs.move(temp, target)
 
--- Also refresh the host runtime copy.
+if data:find("processed %% 8 == 0") then
+    print("blockColor.lua is already patched.")
+else
+    local function replacePlain(text, old, new)
+        local s, e = text:find(old, 1, true)
+        if not s then return nil end
+        return text:sub(1, s - 1) .. new .. text:sub(e + 1)
+    end
+
+    data = replacePlain(
+        data,
+        "for name, rgb in pairs(nameToRGB) do",
+        "local processed = 0\n\tfor name, rgb in pairs(nameToRGB) do"
+    )
+    if not data then error("Could not find palette loop to patch.", 0) end
+
+    data = replacePlain(
+        data,
+        "idToBlit[nameToId[name]] = blitTab[best]\n\tend\nend\nmapToPalette()",
+        "local id = nameToId[name]\n\t\tif id then idToBlit[id] = blitTab[best] end\n\t\tprocessed = processed + 1\n\t\tif processed % 8 == 0 then sleep(0) end\n\tend\nend\nmapToPalette()"
+    )
+    if not data then error("Could not find palette loop ending to patch.", 0) end
+
+    local out = assert(fs.open(sourcePath, "w"))
+    out.write(data)
+    out.close()
+    print("Patched general/blockColor.lua")
+end
+
 fs.makeDir("runtime")
 if fs.exists("runtime/blockColor.lua") then fs.delete("runtime/blockColor.lua") end
-fs.copy(target, "runtime/blockColor.lua")
+fs.copy(sourcePath, "runtime/blockColor.lua")
 
-print("Patched blockColor.lua watchdog issue.")
-print("Now reboot each turtle. It should sync the fixed file from the host.")
+print("Patched runtime/blockColor.lua")
+print("Reboot the HOST, wait for dashboard, then reboot each turtle.")
