@@ -498,7 +498,7 @@ function MapDisplay:redraw() -- super override
 		local function getPixelColor(blockid, wx, wz)
 			local pixelCol = idToBlit[blockid]
 			if self.displayFloorColors and blockid == 0 then
-				local floorId = map:getBlockId(wx, y - 1, wz)
+				local floorId = map:getBlockId(wx, self.mapY - 1, wz) -- LABENHANCED_FLOOR_COLORS_V2
 				if floorId ~= nil and floorId ~= 0 then
 					pixelCol = idToBlit[floorId] or blockedCol
 				end
