@@ -37,6 +37,7 @@ function TaskGroupSelector:new(x,y, taskManager, slowStart)
 	o.positions = {}
 	o.selectionPreview = nil
 	o.btnConfirmArea = nil
+	o.btnReselectArea = nil
 	o.taskGroup = nil
 	o.taskManager = taskManager
 	o.slowStart = slowStart
@@ -254,7 +255,11 @@ function TaskGroupSelector:clearAreaPreview()
 	if self.btnConfirmArea and self.mapDisplay then
 		self.mapDisplay:removeObject(self.btnConfirmArea)
 	end
+	if self.btnReselectArea and self.mapDisplay then
+		self.mapDisplay:removeObject(self.btnReselectArea)
+	end
 	self.btnConfirmArea = nil
+	self.btnReselectArea = nil
 end
 
 function TaskGroupSelector:showAreaPreview()
@@ -282,10 +287,25 @@ function TaskGroupSelector:showAreaPreview()
 	table.insert(self.mapDisplay.areas, self.selectionPreview)
 
 	-- Keep the map open so the selected rectangle can be reviewed.
+	-- Bottom controls: RESELECT on the left, CONFIRM on the right.
+	local bottomY = math.max(1, self.mapDisplay.height - 1)
+
+	self.btnReselectArea = Button:new(
+		"RESELECT",
+		2,
+		bottomY,
+		10,
+		1,
+		colors.orange
+	)
+	self.btnReselectArea.click = function()
+		self:reselectArea()
+	end
+
 	self.btnConfirmArea = Button:new(
 		"CONFIRM",
-		math.max(2, self.mapDisplay.width - 15),
-		1,
+		math.max(13, self.mapDisplay.width - 11),
+		bottomY,
 		10,
 		1,
 		colors.green
@@ -293,7 +313,17 @@ function TaskGroupSelector:showAreaPreview()
 	self.btnConfirmArea.click = function()
 		self:confirmAreaSelection()
 	end
+
+	self.mapDisplay:addObject(self.btnReselectArea)
 	self.mapDisplay:addObject(self.btnConfirmArea)
+	self.mapDisplay:redraw()
+end
+
+function TaskGroupSelector:reselectArea()
+	self:clearAreaPreview()
+	self.positions = {}
+	self.mapDisplay.onPositionSelected = function(objRef,x,y,z) self:onAreaSelected(x,y,z) end
+	self.mapDisplay:selectPosition()
 	self.mapDisplay:redraw()
 end
 
