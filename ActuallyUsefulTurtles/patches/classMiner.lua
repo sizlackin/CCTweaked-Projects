@@ -199,7 +199,7 @@ function Miner:new()
 	setmetatable(o,self)
 
 	print("----INITIALIZING----")
-	print("LabEnhanced miner: contained tunnels + clean return + lava + philolite v4")
+	print("LabEnhanced miner: optimized contained tunnels v5")
 	assert(turtle,"this device is not a turtle")
 	
 	o.fuelLimit = turtle.getFuelLimit()
@@ -2999,6 +2999,122 @@ function Miner:maintainLavaTunnel()
 end
 
 
+-- LABENHANCED_OPTIMIZED_TUNNEL_SCAN
+-- The previous contained-mining build scanned the 1x2 tunnel shell twice per
+-- block: once for exposed ores and again for lava. That doubled rotations,
+-- inspections and up/down movement. This pass handles BOTH in one physical
+-- shell scan while preserving the same fair-mining and lava behavior.
+function Miner:inspectTunnelShellFace(direction, allowOre)
+	local hasBlock, data
+	local target
+
+	if direction == "down" then
+		target = vector.new(self.pos.x,self.pos.y-1,self.pos.z)
+		hasBlock, data = turtle.inspectDown()
+	elseif direction == "up" then
+		target = vector.new(self.pos.x,self.pos.y+1,self.pos.z)
+		hasBlock, data = turtle.inspectUp()
+	else
+		self:updateLookingAt()
+		target = vector.new(self.lookingAt.x,self.lookingAt.y,self.lookingAt.z)
+		hasBlock, data = turtle.inspect()
+	end
+
+	local name = hasBlock and data and data.name or 0
+	self:setMapValue(target.x,target.y,target.z,name)
+
+	-- Lava protection takes priority: replace the touching lava cell with
+	-- cobbled deepslate so the maintained corridor remains dry.
+	if name == "minecraft:lava" then
+		if direction == "down" then
+			return self:placeTunnelMaterial("down")
+		elseif direction == "up" then
+			return self:placeTunnelMaterial("up")
+		else
+			return self:placeTunnelMaterial("front")
+		end
+	end
+
+	-- Fair ore mining: only mine a block physically touching this tunnel cell.
+	-- Never move into the ore hole and never search through the map for more ore.
+	if allowOre and hasBlock and checkOreBlock(name)
+	and self:isInsideActiveMiningBounds(target) then
+		local dug = false
+		if direction == "down" then
+			dug = self:digDown()
+		elseif direction == "up" then
+			dug = self:digUp()
+		else
+			dug = self:dig()
+		end
+
+		if dug and self:getTunnelMaterialSlot() then
+			if direction == "down" then
+				self:placeBlockDown(veinBackfillItem)
+			elseif direction == "up" then
+				self:placeBlockUp(veinBackfillItem)
+			else
+				self:placeBlock(veinBackfillItem)
+			end
+		end
+		return dug
+	end
+
+	return true
+end
+
+function Miner:maintainAndInspectTunnelCell(allowOre)
+	local startOrientation = self.orientation
+	local lowerPos = vector.new(self.pos.x,self.pos.y,self.pos.z)
+
+	-- Lower floor + side walls: one inspection each, handling ore OR lava.
+	self:inspectTunnelShellFace("down",allowOre)
+
+	self:turnTo(startOrientation-1)
+	self:inspectTunnelShellFace("front",allowOre)
+	self:turnTo(startOrientation+1)
+	self:inspectTunnelShellFace("front",allowOre)
+	self:turnTo(startOrientation)
+
+	-- The upper interior itself must stay air. Lava is displaced with cobbled
+	-- deepslate and then re-opened; unexpected mineable solids are cleared.
+	local hasAbove, aboveData = turtle.inspectUp()
+	local aboveName = hasAbove and aboveData and aboveData.name or 0
+	self:setMapValue(self.pos.x,self.pos.y+1,self.pos.z,aboveName)
+	if aboveName == "minecraft:lava" then
+		local placed = self:placeBlockUp(veinBackfillItem)
+		if placed then self:digUp() end
+	elseif hasAbove and not checkDisallowed(aboveName) then
+		self:digUp()
+	end
+
+	-- Scan upper side walls + ceiling in the same pass.
+	if turtle.up() then
+		self:setMapValue(lowerPos.x,lowerPos.y,lowerPos.z,0)
+		self.pos.y = self.pos.y + 1
+		self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+
+		self:turnTo(startOrientation-1)
+		self:inspectTunnelShellFace("front",allowOre)
+		self:turnTo(startOrientation+1)
+		self:inspectTunnelShellFace("front",allowOre)
+		self:turnTo(startOrientation)
+		self:inspectTunnelShellFace("up",allowOre)
+
+		if turtle.down() then
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+			self.pos.y = self.pos.y - 1
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+		else
+			print("TUNNEL SCAN: unable to return to lower tunnel cell")
+		end
+	end
+
+	self:turnTo(startOrientation)
+	self:repairPhiloliteBlastDamage()
+end
+
+
 function Miner:tunnel(length, direction, noInspect)
 	-- throws error
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
@@ -3031,6 +3147,13 @@ function Miner:tunnel(length, direction, noInspect)
 	end
 
 	self:addProgressLevel("tunnel", length, "Blocks") -- Remove later?
+
+	-- Scan the starting tunnel cell once. Every newly-created cell is scanned
+	-- once after entering it below, so no cell needs the old duplicate pass.
+	if not direction or direction == "straight" then
+		self.activeTunnelAnchor = vector.new(self.pos.x,self.pos.y,self.pos.z)
+		self:maintainAndInspectTunnelCell(not noInspect)
+	end
 	
 	-- actually mine
 	for i=1,length do
@@ -3038,12 +3161,6 @@ function Miner:tunnel(length, direction, noInspect)
 		
 			if not direction or direction == "straight" then
 				self.activeTunnelAnchor = vector.new(self.pos.x,self.pos.y,self.pos.z)
-			end
-			if not noInspect then
-				self:inspectMine()
-				self:repairPhiloliteBlastDamage()
-			end
-			if (not direction or direction == "straight") then
 				self:displaceLavaAhead()
 			end
 			if not digFunc(self) then 
@@ -3075,16 +3192,14 @@ function Miner:tunnel(length, direction, noInspect)
 			if above and not checkDisallowed(above) then
 				self:digUp()
 			end
-			self:maintainLavaTunnel()
-			self:repairPhiloliteBlastDamage()
+			self.activeTunnelAnchor = vector.new(self.pos.x,self.pos.y,self.pos.z)
+			self:maintainAndInspectTunnelCell(not noInspect)
 		end
 
 		self:updateProgress("tunnel", i)
 	end
 	
-	if not noInspect then
-		self.activeTunnelAnchor = vector.new(self.pos.x,self.pos.y,self.pos.z)
-		self:inspectMine()
+	if self.philoliteRepairPending then
 		self:repairPhiloliteBlastDamage()
 	end
 	
