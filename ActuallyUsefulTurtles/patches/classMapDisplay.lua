@@ -495,12 +495,56 @@ function MapDisplay:redraw() -- super override
 		-- but optionally color open tunnel cells using the real block directly
 		-- underneath them. This makes remapped tunnels show material colors
 		-- without changing navigation semantics.
+		--
+		-- Important: ChunkyMap:getBlockId() deliberately reports every block at
+		-- Y <= -60 as bedrock. Our mining floor is Y=-60, so floor colors must
+		-- read the stored chunk data directly instead of using getBlockId().
+		-- LABENHANCED_FLOOR_COLORS_V3
+		local floorChunkCache = {}
+		local function getStoredBlockId(wx, wy, wz)
+			local chunkId = map.xyzToChunkId(wx, wy, wz)
+			local chunk = floorChunkCache[chunkId]
+			if chunk == nil then
+				chunk = map:accessChunk(chunkId, false, true)
+				floorChunkCache[chunkId] = chunk or false
+			elseif chunk == false then
+				chunk = nil
+			end
+			if not chunk then return nil end
+			local relativeId = map.xyzToRelativeChunkId(wx, wy, wz)
+			return chunk[relativeId]
+		end
+
+		local function colorForBlock(blockid)
+			if blockid == nil then return nil end
+
+			-- Vanilla/numeric IDs.
+			local c = idToBlit[blockid]
+			if c then return c end
+
+			-- Unknown/modded blocks are stored by registry-name string.
+			if type(blockid) == "string" then
+				c = nameToBlit[blockid]
+				if c then return c end
+
+				-- The static upstream palette contains no modded textures.
+				-- Give Galena-family blocks the purple color they use in this
+				-- modpack instead of collapsing them to generic gray.
+				local lower = string.lower(blockid)
+				if string.find(lower, "galena", 1, true) then
+					return blitTab[colors.purple]
+				end
+			end
+
+			return nil
+		end
+
 		local function getPixelColor(blockid, wx, wz)
-			local pixelCol = idToBlit[blockid]
+			local pixelCol = colorForBlock(blockid)
 			if self.displayFloorColors and blockid == 0 then
-				local floorId = map:getBlockId(wx, self.mapY - 1, wz) -- LABENHANCED_FLOOR_COLORS_V2
+				local floorId = getStoredBlockId(wx, self.mapY - 1, wz)
 				if floorId ~= nil and floorId ~= 0 then
-					pixelCol = idToBlit[floorId] or blockedCol
+					pixelCol = colorForBlock(floorId) or blockedCol
 				end
 			end
 			if not pixelCol then
