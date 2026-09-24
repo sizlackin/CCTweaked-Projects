@@ -89,6 +89,7 @@ function Navigator:requestNearestFrontier(origin,radius)
 		start=posTable(self.miner.pos),
 		origin=origin and posTable(origin) or nil,
 		radius=radius,
+		claimTtl=120000, -- LABENHANCED_MULTI_MAPPER_CLAIMS
 	},4)
 	if not data then return nil,err end
 	if data[1] ~= "TUNNEL_FRONTIER" then
@@ -96,6 +97,26 @@ function Navigator:requestNearestFrontier(origin,radius)
 	end
 	return data[2],nil,data[3]
 end
+
+function Navigator:renewFrontier(frontier)
+	if not frontier or not frontier.source or not frontier.dir then return false end
+	local data = self:_request("TUNNEL_FRONTIER_RENEW",{
+		source=frontier.source,
+		dir=frontier.dir,
+		claimTtl=120000,
+	},3)
+	return data and data[1] == "TUNNEL_FRONTIER_RENEWED" and data[2] == true
+end
+
+function Navigator:releaseFrontier(frontier)
+	if not frontier or not frontier.source or not frontier.dir then return false end
+	local data = self:_request("TUNNEL_FRONTIER_RELEASE",{
+		source=frontier.source,
+		dir=frontier.dir,
+	},3)
+	return data and data[1] == "TUNNEL_FRONTIER_RELEASED" and data[2] == true
+end
+
 
 function Navigator:requestNode(pos)
 	local data,err = self:_request("TUNNEL_NODE_REQUEST",posTable(pos),3)
