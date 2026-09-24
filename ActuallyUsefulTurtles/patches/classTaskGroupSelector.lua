@@ -37,7 +37,7 @@ function TaskGroupSelector:new(x,y, taskManager, slowStart)
 	o.positions = {}
 	o.selectionPreview = nil
 	o.btnConfirmArea = nil
-	o.btnUndoArea = nil
+	o.btnReselectArea = nil
 	o.taskGroup = nil
 	o.taskManager = taskManager
 	o.slowStart = slowStart
@@ -274,7 +274,7 @@ function TaskGroupSelector:clearAreaPreview()
 		while object do
 			local nextObject = object._next
 			if object == self.btnConfirmArea
-			or object == self.btnUndoArea
+			or object == self.btnReselectArea
 			or object.areaPreviewOwner == self then
 				mapDisplay:removeObject(object)
 			end
@@ -282,7 +282,7 @@ function TaskGroupSelector:clearAreaPreview()
 		end
 	end
 	self.btnConfirmArea = nil
-	self.btnUndoArea = nil
+	self.btnReselectArea = nil
 
 	-- Area outlines are drawn into the map's cached pixel frame. Force the next
 	-- redraw to rebuild that frame so a removed green outline cannot linger.
@@ -316,35 +316,36 @@ function TaskGroupSelector:showAreaPreview()
 	}
 	table.insert(self.mapDisplay.areas, self.selectionPreview)
 
-	-- Keep the map open so the selected rectangle can be reviewed.
-	-- Anchor UNDO immediately to the left of CONFIRM at the bottom-right.
+	-- Keep the map open so the selected rectangle can be reviewed. Put both
+	-- actions together below the top controls, away from the status text and
+	-- zoom controls along the bottom edge.
 	local mapWidth = self.mapDisplay:getWidth()
-	local mapHeight = self.mapDisplay:getHeight()
-	local undoWidth = 8
+	local reselectWidth = 10
 	local confirmWidth = 10
 	local buttonGap = 1
-	local bottomY = math.max(1, mapHeight)
-	local confirmX = math.max(1, mapWidth - confirmWidth + 1)
-	local undoX = math.max(1, confirmX - buttonGap - undoWidth)
+	local controlsY = 4
+	local controlsRight = mapWidth - 4
+	local confirmX = math.max(1, controlsRight - confirmWidth + 1)
+	local reselectX = math.max(1, confirmX - buttonGap - reselectWidth)
 
-	self.btnUndoArea = Button:new(
-		"UNDO",
-		undoX,
-		bottomY,
-		undoWidth,
+	self.btnReselectArea = Button:new(
+		"RESELECT",
+		reselectX,
+		controlsY,
+		reselectWidth,
 		1,
-		colors.red
+		colors.orange
 	)
-	self.btnUndoArea.areaPreviewOwner = self
-	self.btnUndoArea.click = function()
-		self:undoAreaSelection()
+	self.btnReselectArea.areaPreviewOwner = self
+	self.btnReselectArea.click = function()
+		self:reselectArea()
 		return true
 	end
 
 	self.btnConfirmArea = Button:new(
 		"CONFIRM",
 		confirmX,
-		bottomY,
+		controlsY,
 		confirmWidth,
 		1,
 		colors.green
@@ -355,12 +356,12 @@ function TaskGroupSelector:showAreaPreview()
 		return true
 	end
 
-	self.mapDisplay:addObject(self.btnUndoArea)
+	self.mapDisplay:addObject(self.btnReselectArea)
 	self.mapDisplay:addObject(self.btnConfirmArea)
 	self.mapDisplay:redraw()
 end
 
-function TaskGroupSelector:undoAreaSelection()
+function TaskGroupSelector:reselectArea()
 	self:clearAreaPreview()
 	self.positions = {}
 	self:refresh()
