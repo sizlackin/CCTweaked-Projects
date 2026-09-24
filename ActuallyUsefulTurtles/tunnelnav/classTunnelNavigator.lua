@@ -127,13 +127,13 @@ end
 
 function Navigator:_recordBlocked(fromPos,dir,hasBlock,data)
 	local target = TunnelMap.target(fromPos,dir)
-	local state,resume,until
+	local state,resume,blockedUntil
 	local name = hasBlock and data and data.name or nil
 
 	if not hasBlock or isTurtleBlock(name) then
 		state = TunnelMap.STATE.TEMPORARILY_BLOCKED
 		resume = TunnelMap.STATE.OPEN
-		until = os.epoch("utc") + self.tempBlockMs
+		blockedUntil = os.epoch("utc") + self.tempBlockMs
 	else
 		state = TunnelMap.STATE.BLOCKED
 		if target and self.miner.setMapValue then
@@ -142,12 +142,12 @@ function Navigator:_recordBlocked(fromPos,dir,hasBlock,data)
 	end
 
 	if self.miner.queueTunnelUpdate then
-		self.miner:queueTunnelUpdate(fromPos,dir,state,{until=until,resume=resume})
+		self.miner:queueTunnelUpdate(fromPos,dir,state,{blockedUntil=blockedUntil,resume=resume})
 		self.miner:flushTunnelUpdatesSync()
 	else
 		self:sendUpdates({{
 			pos=posTable(fromPos),dir=dir,state=state,
-			seen=os.epoch("utc"),until=until,resume=resume,
+			seen=os.epoch("utc"),blockedUntil=blockedUntil,resume=resume,
 		}})
 	end
 
