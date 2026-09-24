@@ -239,7 +239,8 @@ function Mapper:mapNetwork(radius,maxCells)
 		local frontier,reason,stats
 		for requestTry=1,8 do
 			frontier,reason,stats = nav:requestNearestFrontier(startPos,radius)
-			if frontier or reason == "no_frontier" then break end
+			if frontier or reason == "no_frontier"
+			or reason == "all_frontiers_claimed" then break end
 
 			if reason == "unknown_start" then
 				-- Controller may not have received our newest node yet. Only
