@@ -88,13 +88,21 @@ do
 
   local old = "local dist = deltaEFromRGB(r, g, b, cr, cg, cb)"
   local new = "local dist = deltaE(r, g, b, cr, cg, cb) -- LABENHANCED_BLOCKCOLOR_FIX"
-  local s, e = data:find(old, 1, true)
-  if s then data = data:sub(1, s - 1) .. new .. data:sub(e + 1) end
+  if data:find(old, 1, true) then
+    data = data:gsub(old, new, 1)
+  end
 
-  local old2 = "nameToBlit[name] = blitTab[best]\\n\\t\\tidToBlit[nameToId[name]] = blitTab[best]"
-  local new2 = "nameToBlit[name] = blitTab[best]\\n\\t\\tlocal id = nameToId[name]\\n\\t\\tif id then idToBlit[id] = blitTab[best] end\\n\\t\\tsleep(0)"
-  local s2, e2 = data:find(old2, 1, true)
-  if s2 then data = data:sub(1, s2 - 1) .. new2 .. data:sub(e2 + 1) end
+  local oldLine = "idToBlit[nameToId[name]] = blitTab[best]"
+  local replacement = "local id = nameToId[name]\n\t\tif id then idToBlit[id] = blitTab[best] end\n\t\tsleep(0) -- LABENHANCED_BLOCKCOLOR_YIELD"
+  if not data:find("LABENHANCED_BLOCKCOLOR_YIELD", 1, true) then
+    if data:find(oldLine, 1, true) then
+      data = data:gsub(oldLine, replacement, 1)
+    end
+  end
+
+  if not data:find("LABENHANCED_BLOCKCOLOR_YIELD", 1, true) then
+    error("Could not patch blockColor watchdog yield.", 0)
+  end
 
   local out = assert(fs.open(target, "w"))
   out.write(data)
