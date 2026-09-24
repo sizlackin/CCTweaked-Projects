@@ -4,7 +4,7 @@ local global = global
 local node = global.node
 local nodeStream = global.nodeStream
 local nodeUpdate = global.nodeUpdate
-local nodeStorage = global.storage.node
+local nodeStorage = global.storage and global.storage.node or nil -- LABENHANCED_TUNNEL_NAV_BOOTSAFE
 
 local map = global.map
 local tunnelMap = global.tunnelMap -- LABENHANCED_TUNNEL_NAV
@@ -662,7 +662,7 @@ while global.running do
 	if global.processOnlyNodeUpdate then
 		nodeUpdate:checkMessages()
 	else
-		nodeStorage:checkMessages()
+		if nodeStorage then nodeStorage:checkMessages() end
 		--local s = os.epoch("local")
 		node:checkMessages()
 		--print(os.epoch("local")-s,"events")
