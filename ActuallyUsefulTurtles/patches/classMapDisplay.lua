@@ -49,14 +49,7 @@ function MapDisplay:new(x,y,width,height,map)
 	o.areas = {}
 	o.backgroundColor = default.backgroundColor
 
-	-- LabEnhanced manual map correction tool.
-	o.refillPositions = {}
-	o.refillPreview = nil
-	o.refillSelecting = false
-	o.refillPreviousOnPositionSelected = nil
 	o.displayFloorColors = true -- LABENHANCED_FLOOR_COLORS
-	o.btnRefillUndo = nil
-	o.btnRefillConfirm = nil
 	
 	o.mapX = 0
 	o.mapY = 0
@@ -116,10 +109,6 @@ function MapDisplay:initialize()
 	self.btnFloorColors = CheckBox:new(1,self.height-4, "floor colors",self.displayFloorColors,nil,nil,self.backgroundColor)
 	self.btnFocusPocket = CheckBox:new(1,self.height-3, "live pos",self.focusPocket,nil,nil,self.backgroundColor)
 
-	self.btnMarkRefilled = Button:new("MARK REFILLED",5,7,15,1,colors.orange)
-	self.btnMarkRefilled.click = function()
-		return self:startMarkRefilled()
-	end
 
 	-- self == MapDisplay not button!
 	self.btnLeft.click = function()
@@ -187,7 +176,6 @@ function MapDisplay:initialize()
 	self:addObject(self.btnHome)
 	self:addObject(self.btnCircle)
 	self:addObject(self.btnFloorColors)
-	self:addObject(self.btnMarkRefilled)
 	self:addObject(self.btnClose)
 
 	if pocket then self:addObject(self.btnFocusPocket) end
@@ -287,19 +275,10 @@ function MapDisplay:onResize()
 	self.btnFloorColors:setPos(1,self.height-4)
 	self.btnFocusPocket:setPos(1,self.height-3)
 
-	-- Keep MARK REFILLED below the coordinate readout and away from map arrows.
-	self.btnMarkRefilled:setPos(5,math.min(7,math.max(1,self.height-4)))
-	if self.btnRefillUndo then
-		self.btnRefillUndo:setPos(5,math.min(6,math.max(1,self.height-5)))
-	end
-	if self.btnRefillConfirm then
-		self.btnRefillConfirm:setPos(13,math.min(6,math.max(1,self.height-5)))
-	end
 	
 end
 function MapDisplay:onRemove(parent)
 	self.focusId = nil
-	self:cancelMarkRefilled(true)
 	self:showControls()
 end
 
@@ -958,171 +937,7 @@ function MapDisplay:isWithin(x,y,z)
 	return false
 end
 
--- LabEnhanced: manually mark player-refilled tunnel sections on the host map.
--- This edits only the currently displayed Y level and stores cobbled deepslate.
-function MapDisplay:removeRefillPreview()
-	if self.areas then
-		for i=#self.areas,1,-1 do
-			local area = self.areas[i]
-			if area == self.refillPreview or area.markRefilledOwner == self then
-				table.remove(self.areas,i)
-			end
-		end
-	end
-	self.refillPreview = nil
-
-	if self.btnRefillUndo then
-		self:removeObject(self.btnRefillUndo)
-		self.btnRefillUndo = nil
-	end
-	if self.btnRefillConfirm then
-		self:removeObject(self.btnRefillConfirm)
-		self.btnRefillConfirm = nil
-	end
-
-	self.fullRedraw = true
-end
-
-function MapDisplay:restoreRefillCallback()
-	if self.refillPreviousOnPositionSelected then
-		self.onPositionSelected = self.refillPreviousOnPositionSelected
-	else
-		self.onPositionSelected = MapDisplay.onPositionSelected
-	end
-	self.refillPreviousOnPositionSelected = nil
-end
-
-function MapDisplay:cancelMarkRefilled(silent)
-	if not self.refillSelecting and not self.refillPreview then return true end
-	self.doSelectPosition = false
-	self:removeRefillPreview()
-	self.refillPositions = {}
-	self.refillSelecting = false
-	self:restoreRefillCallback()
-	if not silent then self:redraw() end
-	return true
-end
-
-function MapDisplay:startMarkRefilled()
-	-- Do not steal clicks from Groups > Create > Select area or another selector.
-	if self.doSelectPosition and not self.refillSelecting then
-		print("finish current map selection first")
-		return true
-	end
-
-	self:cancelMarkRefilled(true)
-	self.refillSelecting = true
-	self.refillPositions = {}
-	self.refillPreviousOnPositionSelected = self.onPositionSelected
-	self.onPositionSelected = function(objRef,x,y,z)
-		return self:onMarkRefilledPosition(x,y,z)
-	end
-	self:selectPosition()
-	self.fullRedraw = true
-	self:redraw()
-	return true
-end
-
-function MapDisplay:onMarkRefilledPosition(x,y,z)
-	if not self.refillSelecting or not x or not z then return true end
-
-	-- MARK REFILLED is a 2D correction tool for the map level currently shown.
-	-- Lock both selected corners to the level where selection began.
-	if #self.refillPositions == 0 then
-		y = self.mapMidY
-		table.insert(self.refillPositions,vector.new(x,y,z))
-		self.onPositionSelected = function(objRef,nx,ny,nz)
-			return self:onMarkRefilledPosition(nx,ny,nz)
-		end
-		self:selectPosition()
-	else
-		y = self.refillPositions[1].y
-		table.insert(self.refillPositions,vector.new(x,y,z))
-		self:showMarkRefilledPreview()
-	end
-	return true
-end
-
-function MapDisplay:showMarkRefilledPreview()
-	if #self.refillPositions ~= 2 then return end
-	self:removeRefillPreview()
-
-	local a,b = self.refillPositions[1],self.refillPositions[2]
-	self.refillPreview = {
-		start = vector.new(math.min(a.x,b.x),a.y,math.min(a.z,b.z)),
-		finish = vector.new(math.max(a.x,b.x),a.y,math.max(a.z,b.z)),
-		color = colors.green,
-		markRefilledOwner = self,
-	}
-	table.insert(self.areas,self.refillPreview)
-
-	local controlsY = math.min(6,math.max(1,self.height-5))
-	self.btnRefillUndo = Button:new("UNDO",5,controlsY,7,1,colors.red)
-	self.btnRefillUndo.markRefilledOwner = self
-	self.btnRefillUndo.click = function()
-		self:removeRefillPreview()
-		self.refillPositions = {}
-		self.onPositionSelected = function(objRef,x,y,z)
-			return self:onMarkRefilledPosition(x,y,z)
-		end
-		self:selectPosition()
-		self:redraw()
-		return true
-	end
-
-	self.btnRefillConfirm = Button:new("CONFIRM",13,controlsY,10,1,colors.green)
-	self.btnRefillConfirm.markRefilledOwner = self
-	self.btnRefillConfirm.click = function()
-		return self:confirmMarkRefilled()
-	end
-
-	self:addObject(self.btnRefillUndo)
-	self:addObject(self.btnRefillConfirm)
-	self.fullRedraw = true
-	self:redraw()
-end
-
-function MapDisplay:confirmMarkRefilled()
-	if #self.refillPositions ~= 2 or not self.map then return true end
-
-	local a,b = self.refillPositions[1],self.refillPositions[2]
-	local minX,maxX = math.min(a.x,b.x),math.max(a.x,b.x)
-	local minZ,maxZ = math.min(a.z,b.z),math.max(a.z,b.z)
-	local y = a.y
-	local changedChunks = {}
-	local count = 0
-
-	for x=minX,maxX do
-		for z=minZ,maxZ do
-			self.map:setData(x,y,z,"minecraft:cobbled_deepslate",true)
-			if self.map.xyzToChunkId then
-				changedChunks[self.map.xyzToChunkId(x,y,z)] = true
-			end
-			count = count + 1
-		end
-	end
-
-	-- Persist only chunks touched by this correction when possible.
-	if self.map.saveChunk then
-		for chunkId,_ in pairs(changedChunks) do
-			self.map:saveChunk(chunkId)
-		end
-	elseif self.map.save then
-		self.map:save()
-	end
-
-	print("MARK REFILLED:",count,"blocks at Y",y)
-	self.doSelectPosition = false
-	self:removeRefillPreview()
-	self.refillPositions = {}
-	self.refillSelecting = false
-	self:restoreRefillCallback()
-	self.fullRedraw = true
-	self:redraw()
-	return true
-end
-
-
+-- LABENHANCED_MARK_REFILLED_REMOVED
 function MapDisplay:setMap(map)
 	self.map = map
 end
