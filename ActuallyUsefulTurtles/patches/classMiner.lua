@@ -2334,6 +2334,15 @@ function Miner:mineArea(start, finish)
 		local width = math.abs(diff.x)
 		local height = math.abs(diff.y)
 		local depth = math.abs(diff.z)
+
+		-- LABENHANCED_PAIRED_MINING
+		-- Prefer the long horizontal axis for strip tunnels. This keeps
+		-- assigned stripes straight and reduces connector/path clutter.
+		if width >= depth then
+			orientation = (diff.x >= 0) and 3 or 1
+		else
+			orientation = (diff.z >= 0) and 0 or 2
+		end
 		
 		
 		local rowFactor = 3
