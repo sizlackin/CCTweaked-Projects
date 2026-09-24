@@ -1,7 +1,7 @@
 -- Installs shared smart mine access for Actually Useful Turtles.
 -- Run on the MAIN controller at the normal CraftOS > prompt.
--- Paired jobs reuse existing tunnels as far as possible, then only one turtle
--- creates a new 1-wide x 2-high access corridor to the selected green area.
+-- 2-4 turtle jobs reuse existing tunnels as far as possible. Only one turtle
+-- creates the shared 1-wide x 2-high access corridor and in-box access spine.
 
 local files = {
   {
@@ -46,5 +46,5 @@ for _,entry in ipairs(files) do
   end
 end
 
-print("Smart shared mine access installed.")
+print("Smart shared mine access installed (supports 2-4 turtles).")
 print("Reboot controller, then reboot DTX-001 and DTX-002.")
