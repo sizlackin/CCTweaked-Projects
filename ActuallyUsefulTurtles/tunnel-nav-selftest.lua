@@ -21,7 +21,7 @@ local function edge(map,a,dir,state,seen,extra)
 	extra = extra or {}
 	map:applyUpdates({{
 		pos=a,dir=dir,state=state,seen=seen or os.epoch("utc"),
-		until=extra.until,resume=extra.resume,
+		blockedUntil=extra.blockedUntil,resume=extra.resume,
 	}})
 end
 
@@ -54,7 +54,7 @@ check("stale map update rejected",
 
 -- Temporary obstacle removes the road for now, then expires back to OPEN.
 edge(map,B,"south",S.TEMPORARILY_BLOCKED,t+20,{
-	until=os.epoch("utc")-1,resume=S.OPEN,
+	blockedUntil=os.epoch("utc")-1,resume=S.OPEN,
 })
 check("temporary block expires",
 	map:getConnectionState(B,"south") == S.OPEN)
