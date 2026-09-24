@@ -199,7 +199,7 @@ function Miner:new()
 	setmetatable(o,self)
 
 	print("----INITIALIZING----")
-	print("LabEnhanced miner: shared smart-access tunnels v6")
+	print("LabEnhanced miner: four-turtle shared smart-access v7")
 	assert(turtle,"this device is not a turtle")
 	
 	o.fuelLimit = turtle.getFuelLimit()
@@ -2701,49 +2701,52 @@ function Miner:digNeatAccessTunnelTo(target)
 	return self.pos == target
 end
 
-function Miner:reachSharedMineEntrance(sharedEntry, accessEntry, isLeader)
+function Miner:reachSharedMineEntrance(sharedEntry, sharedEnd, accessEntry, isLeader)
 	if not sharedEntry then return false end
 
-	-- If the whole route already exists, just use it.
-	if self:navigateOpenPathToPos(sharedEntry.x,sharedEntry.y,sharedEntry.z) then
-		-- done
-	elseif isLeader then
-		-- Leader follows old tunnels/caves as close as possible, then makes ONE
-		-- new maintained 1x2 connector for the job.
-		self:followExistingTunnelToward(sharedEntry)
-		print("CREATING SHARED 1x2 MINE ACCESS")
-		if not self:digNeatAccessTunnelTo(sharedEntry) then
-			return false
+	if isLeader then
+		-- First reuse the known tunnel network as far as it already goes.
+		if not self:navigateOpenPathToPos(sharedEntry.x,sharedEntry.y,sharedEntry.z) then
+			self:followExistingTunnelToward(sharedEntry)
+			print("CREATING SHARED 1x2 MINE ACCESS")
+			if not self:digNeatAccessTunnelTo(sharedEntry) then
+				return false
+			end
 		end
+
+		-- With 3-4 turtles, continue the SAME maintained 1x2 corridor across
+		-- the stripe entries inside the green box. This is the only distribution
+		-- spine; followers never create parallel approaches.
+		if sharedEnd and self.pos ~= sharedEnd then
+			if not self:navigateOpenPathToPos(sharedEnd.x,sharedEnd.y,sharedEnd.z) then
+				print("CREATING SHARED IN-BOX ACCESS SPINE")
+				if not self:digNeatAccessTunnelTo(sharedEnd) then return false end
+			end
+		end
+
+		-- Return along the just-created open spine to this turtle's own entry.
+		local ownEntry = accessEntry or sharedEntry
+		if self.pos ~= ownEntry then
+			if not self:navigateOpenPathToPos(ownEntry.x,ownEntry.y,ownEntry.z) then
+				return false
+			end
+		end
+		return true
 	else
-		-- Follower must not create a second approach tunnel. Wait for the
-		-- leader's shared corridor to appear in the synchronized map.
+		-- Followers are not allowed to make a second access tunnel. Wait until
+		-- the leader has opened a complete path all the way to this stripe entry.
+		local ownEntry = accessEntry or sharedEntry
 		print("WAITING FOR SHARED MINE ACCESS")
-		local reached = false
 		for attempt=1,300 do
-			if self:navigateOpenPathToPos(sharedEntry.x,sharedEntry.y,sharedEntry.z) then
-				reached = true
-				break
+			if self:navigateOpenPathToPos(ownEntry.x,ownEntry.y,ownEntry.z) then
+				return true
 			end
 			sleep(1)
 		end
-		if not reached then
-			print("SHARED MINE ACCESS TIMEOUT - REFUSING SECOND TUNNEL")
-			return false
-		end
+		print("SHARED MINE ACCESS TIMEOUT - REFUSING SECOND TUNNEL")
+		return false
 	end
-
-	-- Paired stripes have adjacent entry cells. The follower may open the one
-	-- 1x2 step from the shared leader entrance into its own green-box stripe.
-	if accessEntry and self.pos ~= accessEntry then
-		if not self:navigateOpenPathToPos(accessEntry.x,accessEntry.y,accessEntry.z) then
-			if not self:digNeatAccessTunnelTo(accessEntry) then return false end
-		end
-	end
-
-	return true
 end
-
 
 function Miner:mineArea(start, finish) 
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name}, true)
@@ -2814,13 +2817,14 @@ function Miner:mineArea(start, finish)
 
 		local assignmentVars = self.currentTaskAssignment and self.currentTaskAssignment.vars or {}
 		local sharedEntry = assignmentVars.sharedAccessEntry
+		local sharedEnd = assignmentVars.sharedAccessEnd
 		local accessEntry = assignmentVars.accessEntry
 		local accessLeader = assignmentVars.accessLeader
 
 		local reachedArea = false
 		if sharedEntry then
 			if not vars.accessComplete then
-				reachedArea = self:reachSharedMineEntrance(sharedEntry,accessEntry,accessLeader == true)
+				reachedArea = self:reachSharedMineEntrance(sharedEntry,sharedEnd,accessEntry,accessLeader == true)
 				if reachedArea then
 					vars.accessComplete = true
 					self.checkPointer:save(self)
