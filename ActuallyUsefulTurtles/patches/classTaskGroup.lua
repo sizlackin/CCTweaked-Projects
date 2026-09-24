@@ -440,48 +440,75 @@ function TaskGroup:assignAreas(areas)
 	-- assign the splitted areas to available turtles
 	self:deleteTasks()
 	local count, turtles = self:getAvailableTurtles()
-	if count < #areas then 
+	if count < #areas then
 		print("more areas than available turtles")
 	end
 
 	-- LABENHANCED_SHARED_MINE_ENTRANCE
-	-- For a paired mineArea job, turtle #1 creates ONE shared 1x2 access tunnel.
-	-- Turtle #2 waits for that route, follows it, then steps into its adjacent
-	-- stripe inside the selected green area. This prevents two separate approach
-	-- tunnels from being carved from home/the existing tunnel network.
-	local pairedAccess = nil
-	if self.taskName == "mineArea" and #areas == 2 and self.area and turtles[1] then
-		local a1, a2 = areas[1], areas[2]
-		local leaderPos = turtles[1].state and turtles[1].state.pos
+	-- 2-4 turtle mineArea jobs use ONE shared 1x2 access tunnel. Turtle #1
+	-- creates the external approach and a short in-box access spine connecting
+	-- the stripe entries. All other turtles reuse it instead of carving their
+	-- own approach tunnels.
+	local sharedAccess = nil
+	if self.taskName == "mineArea" and #areas >= 2 and #areas <= 4
+	and self.area and turtles[1] and turtles[1].state then
+		local leaderPos = turtles[1].state.pos
 		local minY = math.min(self.area.start.y,self.area.finish.y)
+		local minX = math.min(self.area.start.x,self.area.finish.x)
+		local maxX = math.max(self.area.start.x,self.area.finish.x)
+		local minZ = math.min(self.area.start.z,self.area.finish.z)
+		local maxZ = math.max(self.area.start.z,self.area.finish.z)
 
-		if a1.finish.x < a2.start.x then
-			-- West/east stripes. Both span the full Z length, so enter from
-			-- whichever Z edge is closer to the leader and split at the seam.
-			local minZ = math.min(self.area.start.z,self.area.finish.z)
-			local maxZ = math.max(self.area.start.z,self.area.finish.z)
+		-- Detect whether the long stripes are arranged west/east or north/south.
+		local stripesAlongX = areas[1].finish.x < areas[#areas].start.x
+		local entries = {}
+
+		if stripesAlongX then
+			-- Stripes span Z. Enter from whichever Z edge is closer to the
+			-- first available turtle, then distribute along X.
 			local edgeZ = minZ
 			if leaderPos and math.abs(leaderPos.z-maxZ) < math.abs(leaderPos.z-minZ) then
 				edgeZ = maxZ
 			end
-			pairedAccess = {
-				leader = vector.new(a1.finish.x,minY,edgeZ),
-				follower = vector.new(a2.start.x,minY,edgeZ),
-			}
-		elseif a1.finish.z < a2.start.z then
-			-- North/south stripes. Both span the full X length, so enter from
-			-- whichever X edge is closer to the leader and split at the seam.
-			local minX = math.min(self.area.start.x,self.area.finish.x)
-			local maxX = math.max(self.area.start.x,self.area.finish.x)
+			for i,area in ipairs(areas) do
+				local x = math.floor((area.start.x + area.finish.x) / 2)
+				entries[i] = vector.new(x,minY,edgeZ)
+			end
+		else
+			-- Stripes span X. Enter from whichever X edge is closer, then
+			-- distribute along Z.
 			local edgeX = minX
 			if leaderPos and math.abs(leaderPos.x-maxX) < math.abs(leaderPos.x-minX) then
 				edgeX = maxX
 			end
-			pairedAccess = {
-				leader = vector.new(edgeX,minY,a1.finish.z),
-				follower = vector.new(edgeX,minY,a2.start.z),
-			}
+			for i,area in ipairs(areas) do
+				local z = math.floor((area.start.z + area.finish.z) / 2)
+				entries[i] = vector.new(edgeX,minY,z)
+			end
 		end
+
+		-- Put the leader on whichever END stripe is closer to home. This makes
+		-- the internal access spine a single straight run across the stripe ends.
+		local first, last = entries[1], entries[#entries]
+		if leaderPos and first and last then
+			local dFirst = math.abs(leaderPos.x-first.x)+math.abs(leaderPos.y-first.y)+math.abs(leaderPos.z-first.z)
+			local dLast = math.abs(leaderPos.x-last.x)+math.abs(leaderPos.y-last.y)+math.abs(leaderPos.z-last.z)
+			if dLast < dFirst then
+				local reversedAreas, reversedEntries = {}, {}
+				for i=#areas,1,-1 do
+					table.insert(reversedAreas,areas[i])
+					table.insert(reversedEntries,entries[i])
+				end
+				areas = reversedAreas
+				entries = reversedEntries
+			end
+		end
+
+		sharedAccess = {
+			entry = entries[1],
+			finish = entries[#entries],
+			entries = entries,
+		}
 	end
 
 	for i,area in ipairs(areas) do
@@ -490,9 +517,10 @@ function TaskGroup:assignAreas(areas)
 		print("created", task.shortId, "for turtle", turtleId, "area", area.start.x, area.start.y, area.start.z, area.finish.x, area.finish.y, area.finish.z)
 		task:setArea(area.start, area.finish)
 
-		if pairedAccess then
-			task:setVar("sharedAccessEntry", pairedAccess.leader)
-			task:setVar("accessEntry", i == 1 and pairedAccess.leader or pairedAccess.follower)
+		if sharedAccess then
+			task:setVar("sharedAccessEntry", sharedAccess.entry)
+			task:setVar("sharedAccessEnd", sharedAccess.finish)
+			task:setVar("accessEntry", sharedAccess.entries[i])
 			task:setVar("accessLeader", i == 1)
 			task:setVar("sharedAccessGroup", self.id)
 		end
@@ -813,10 +841,10 @@ function TaskGroup:splitArea()
 	local finish = self.area.finish
 
 	-- LABENHANCED_PAIRED_MINING
-	-- For exactly two mineArea turtles, split the selected rectangle into
-	-- two long, non-overlapping stripes. This keeps both robots working
-	-- toward the same job without crossing through each other's section.
-	if self.taskName == "mineArea" and self.groupSize == 2 then
+	-- For 2-4 mineArea turtles, divide the green rectangle into long,
+	-- non-overlapping stripes. All stripes keep the full long axis so the
+	-- turtles work in parallel without crossing each other's main tunnels.
+	if self.taskName == "mineArea" and self.groupSize >= 2 and self.groupSize <= 4 then
 		local minX = math.min(start.x, finish.x)
 		local maxX = math.max(start.x, finish.x)
 		local minY = math.min(start.y, finish.y)
@@ -826,38 +854,48 @@ function TaskGroup:splitArea()
 
 		local width = maxX - minX + 1
 		local depth = maxZ - minZ + 1
+		local n = self.groupSize
 		local areas = {}
 
-		if width <= depth then
-			-- Z is the long direction: divide the job into west/east stripes.
-			local midX = math.floor((minX + maxX) / 2)
-			areas[1] = {
-				start = vector.new(minX, minY, minZ),
-				finish = vector.new(midX, maxY, maxZ)
-			}
-			areas[2] = {
-				start = vector.new(midX + 1, minY, minZ),
-				finish = vector.new(maxX, maxY, maxZ)
-			}
-		else
-			-- X is the long direction: divide the job into north/south stripes.
-			local midZ = math.floor((minZ + maxZ) / 2)
-			areas[1] = {
-				start = vector.new(minX, minY, minZ),
-				finish = vector.new(maxX, maxY, midZ)
-			}
-			areas[2] = {
-				start = vector.new(minX, minY, midZ + 1),
-				finish = vector.new(maxX, maxY, maxZ)
-			}
+		if width <= depth and width >= n then
+			-- Z is the long direction: divide west/east across X.
+			local base = math.floor(width / n)
+			local extra = width % n
+			local cursor = minX
+			for i=1,n do
+				local size = base + (i <= extra and 1 or 0)
+				areas[i] = {
+					start = vector.new(cursor,minY,minZ),
+					finish = vector.new(cursor + size - 1,maxY,maxZ),
+				}
+				cursor = cursor + size
+			end
+		elseif depth < width and depth >= n then
+			-- X is the long direction: divide north/south across Z.
+			local base = math.floor(depth / n)
+			local extra = depth % n
+			local cursor = minZ
+			for i=1,n do
+				local size = base + (i <= extra and 1 or 0)
+				areas[i] = {
+					start = vector.new(minX,minY,cursor),
+					finish = vector.new(maxX,maxY,cursor + size - 1),
+				}
+				cursor = cursor + size
+			end
 		end
 
-		self:assignAreas(areas)
-		return
+		if #areas == n then
+			self:assignAreas(areas)
+			return
+		end
+		-- If the selected rectangle is too narrow to make one stripe per
+		-- turtle, fall through to the upstream 3D splitter instead of creating
+		-- empty areas.
 	end
 
 	local rowMargin, levelMargin = 1, 1
-	if self.taskName == "mineArea" then 
+	if self.taskName == "mineArea" then
 		rowMargin = 2
 		levelMargin = 1
 	elseif self.taskName == "excavateArea" then
