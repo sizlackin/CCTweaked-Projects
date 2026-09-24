@@ -199,7 +199,7 @@ function Miner:new()
 	setmetatable(o,self)
 
 	print("----INITIALIZING----")
-	print("LabEnhanced miner: optimized contained tunnels v5")
+	print("LabEnhanced miner: shared smart-access tunnels v6")
 	assert(turtle,"this device is not a turtle")
 	
 	o.fuelLimit = turtle.getFuelLimit()
@@ -2565,6 +2565,186 @@ function Miner:clearProgress()
 end
 
 
+-- LABENHANCED_SMART_MINE_ACCESS
+-- Reuse known open tunnel space for as long as possible before making a new
+-- approach tunnel. Only the designated access leader may create the external
+-- connector; followers wait for and reuse that route.
+local function accessPosKey(x,y,z)
+	return x .. "," .. y .. "," .. z
+end
+
+function Miner:followExistingTunnelToward(target)
+	if not target then return false end
+	if self.pos == target then return true end
+
+	-- Breadth-first walk over KNOWN AIR only. Besides being safe, this gives us
+	-- the reachable existing tunnel point closest to the new mining entrance.
+	local queue = { vector.new(self.pos.x,self.pos.y,self.pos.z) }
+	local head = 1
+	local visited = {}
+	local previous = {}
+	local positions = {}
+	local startKey = accessPosKey(self.pos.x,self.pos.y,self.pos.z)
+	visited[startKey] = true
+	positions[startKey] = queue[1]
+
+	local bestKey = startKey
+	local bestScore = math.abs(self.pos.x-target.x) + math.abs(self.pos.z-target.z) + math.abs(self.pos.y-target.y) * 6
+	local bestSteps = 0
+	local steps = {[startKey]=0}
+	local maxNodes = 12000
+	local nodes = 0
+	local dirs = {
+		vector.new(1,0,0), vector.new(-1,0,0),
+		vector.new(0,0,1), vector.new(0,0,-1),
+		vector.new(0,1,0), vector.new(0,-1,0),
+	}
+
+	while head <= #queue and nodes < maxNodes do
+		local p = queue[head]
+		head = head + 1
+		nodes = nodes + 1
+		local pk = accessPosKey(p.x,p.y,p.z)
+		local psteps = steps[pk] or 0
+
+		local score = math.abs(p.x-target.x) + math.abs(p.z-target.z) + math.abs(p.y-target.y) * 6
+		if score < bestScore or (score == bestScore and psteps < bestSteps) then
+			bestScore = score
+			bestKey = pk
+			bestSteps = psteps
+		end
+		if score == 0 then
+			bestKey = pk
+			break
+		end
+
+		for _,d in ipairs(dirs) do
+			local n = p + d
+			local nk = accessPosKey(n.x,n.y,n.z)
+			if not visited[nk] then
+				visited[nk] = true
+				-- Existing-path travel is intentionally strict: only cells
+				-- already known by the map to be open air are traversable.
+				if self:getMapValue(n.x,n.y,n.z) == 0 then
+					previous[nk] = pk
+					positions[nk] = n
+					steps[nk] = psteps + 1
+					table.insert(queue,n)
+				end
+			end
+		end
+
+		if nodes % 1000 == 0 then sleep(0) end
+	end
+
+	if bestKey == startKey then
+		return false
+	end
+
+	local reverse = {}
+	local key = bestKey
+	while key and key ~= startKey do
+		table.insert(reverse,positions[key])
+		key = previous[key]
+	end
+
+	for i=#reverse,1,-1 do
+		if not self:moveNoDigToAdjacent(reverse[i]) then
+			print("EXISTING ACCESS PATH BLOCKED")
+			return false
+		end
+	end
+	return true
+end
+
+function Miner:digNeatAccessTunnelTo(target)
+	if not target then return false end
+
+	-- Keep the connector simple and readable: one continuous Manhattan route,
+	-- always using the same 1-wide x 2-high horizontal tunnel machinery.
+	local function digAxis(axis)
+		local delta
+		if axis == "x" then delta = target.x - self.pos.x
+		else delta = target.z - self.pos.z end
+		if delta == 0 then return true end
+
+		if axis == "x" then
+			self:turnTo(delta > 0 and 3 or 1)
+		else
+			self:turnTo(delta > 0 and 0 or 2)
+		end
+		self:tunnelStraight(math.abs(delta), true)
+		return true
+	end
+
+	-- Prefer the longer horizontal leg first so the access route has at most
+	-- one clean corner and does not staircase/zig-zag through untouched rock.
+	local dx = math.abs(target.x-self.pos.x)
+	local dz = math.abs(target.z-self.pos.z)
+	if dx >= dz then
+		digAxis("x")
+		digAxis("z")
+	else
+		digAxis("z")
+		digAxis("x")
+	end
+
+	-- Most mining floors are on the same Y level. If not, finish with one
+	-- compact vertical connector rather than allowing generic 1x1 navigation.
+	local dy = target.y - self.pos.y
+	if dy > 0 then
+		self:tunnelUp(dy,true)
+	elseif dy < 0 then
+		self:tunnelDown(-dy,true)
+	end
+
+	return self.pos == target
+end
+
+function Miner:reachSharedMineEntrance(sharedEntry, accessEntry, isLeader)
+	if not sharedEntry then return false end
+
+	-- If the whole route already exists, just use it.
+	if self:navigateOpenPathToPos(sharedEntry.x,sharedEntry.y,sharedEntry.z) then
+		-- done
+	elseif isLeader then
+		-- Leader follows old tunnels/caves as close as possible, then makes ONE
+		-- new maintained 1x2 connector for the job.
+		self:followExistingTunnelToward(sharedEntry)
+		print("CREATING SHARED 1x2 MINE ACCESS")
+		if not self:digNeatAccessTunnelTo(sharedEntry) then
+			return false
+		end
+	else
+		-- Follower must not create a second approach tunnel. Wait for the
+		-- leader's shared corridor to appear in the synchronized map.
+		print("WAITING FOR SHARED MINE ACCESS")
+		local reached = false
+		for attempt=1,300 do
+			if self:navigateOpenPathToPos(sharedEntry.x,sharedEntry.y,sharedEntry.z) then
+				reached = true
+				break
+			end
+			sleep(1)
+		end
+		if not reached then
+			print("SHARED MINE ACCESS TIMEOUT - REFUSING SECOND TUNNEL")
+			return false
+		end
+	end
+
+	-- Paired stripes have adjacent entry cells. The follower may open the one
+	-- 1x2 step from the shared leader entrance into its own green-box stripe.
+	if accessEntry and self.pos ~= accessEntry then
+		if not self:navigateOpenPathToPos(accessEntry.x,accessEntry.y,accessEntry.z) then
+			if not self:digNeatAccessTunnelTo(accessEntry) then return false end
+		end
+	end
+
+	return true
+end
+
+
 function Miner:mineArea(start, finish) 
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name}, true)
 	-- mine area within start and finish pos
@@ -2632,7 +2812,47 @@ function Miner:mineArea(start, finish)
 		print("start", start,"end",finish, "diff", diff, "levels", levels)
 		self:updateProgress("stage", 0.01)
 
-		if not self:navigateToPos(start.x, start.y, start.z) then
+		local assignmentVars = self.currentTaskAssignment and self.currentTaskAssignment.vars or {}
+		local sharedEntry = assignmentVars.sharedAccessEntry
+		local accessEntry = assignmentVars.accessEntry
+		local accessLeader = assignmentVars.accessLeader
+
+		local reachedArea = false
+		if sharedEntry then
+			if not vars.accessComplete then
+				reachedArea = self:reachSharedMineEntrance(sharedEntry,accessEntry,accessLeader == true)
+				if reachedArea then
+					vars.accessComplete = true
+					self.checkPointer:save(self)
+				end
+			else
+				reachedArea = self:navigateOpenPathToPos((accessEntry or sharedEntry).x,(accessEntry or sharedEntry).y,(accessEntry or sharedEntry).z)
+			end
+
+			-- Once at the paired entrance, getAreaStart will naturally choose
+			-- the nearest corner of this turtle's assigned stripe. If the exact
+			-- stripe start is not open yet, create only the small in-box 1x2
+			-- connection from the shared entrance.
+			if reachedArea then
+				start, finish, orientation = self:getAreaStart(start,finish)
+				if self.pos ~= start then
+					if not self:navigateOpenPathToPos(start.x,start.y,start.z) then
+						reachedArea = self:digNeatAccessTunnelTo(start)
+					end
+				end
+			end
+		else
+			-- Backward-compatible single-turtle/non-paired jobs: still prefer
+			-- existing tunnels, then make one neat 1x2 approach instead of a
+			-- generic 1x1 navigation tunnel.
+			reachedArea = self:navigateOpenPathToPos(start.x,start.y,start.z)
+			if not reachedArea then
+				self:followExistingTunnelToward(start)
+				reachedArea = self:digNeatAccessTunnelTo(start)
+			end
+		end
+
+		if not reachedArea then
 			self:returnHome()
 			self:error("UNABLE TO GET TO AREA") -- resumable
 		else
