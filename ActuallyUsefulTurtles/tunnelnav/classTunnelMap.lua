@@ -63,6 +63,8 @@ function TunnelMap:new(opts)
 	local o = {
 		nodes = {},
 		frontiers = {},
+		claims = {}, -- LABENHANCED_MULTI_MAPPER_CLAIMS
+		claimsByOwner = {},
 		revision = 0,
 		dirty = false,
 		lastSave = 0,
@@ -103,6 +105,67 @@ function TunnelMap:_frontierKey(pos,dir)
 	return TunnelMap.key(pos).."|"..dir
 end
 
+function TunnelMap:_releaseClaimKey(fk)
+	local claim = self.claims[fk]
+	if not claim then return false end
+	if self.claimsByOwner[claim.owner] == fk then
+		self.claimsByOwner[claim.owner] = nil
+	end
+	self.claims[fk] = nil
+	return true
+end
+
+function TunnelMap:cleanupExpiredClaims()
+	local t = now()
+	for fk,claim in pairs(self.claims) do
+		if not claim.expires or claim.expires <= t then
+			self:_releaseClaimKey(fk)
+		end
+	end
+end
+
+function TunnelMap:claimFrontier(pos,dir,owner,ttlMs)
+	if owner == nil then return true,nil end
+	self:cleanupExpiredClaims()
+	local fk = self:_frontierKey(pos,dir)
+	if not self.frontiers[fk] then return false,"not_frontier" end
+
+	local existing = self.claims[fk]
+	if existing and existing.owner ~= owner then
+		return false,"claimed"
+	end
+
+	-- One active frontier per turtle. Claiming a new one releases the old one.
+	local oldKey = self.claimsByOwner[owner]
+	if oldKey and oldKey ~= fk then
+		self:_releaseClaimKey(oldKey)
+	end
+
+	local expires = now() + (ttlMs or 120000)
+	self.claims[fk] = {owner=owner,expires=expires}
+	self.claimsByOwner[owner] = fk
+	return true,expires
+end
+
+function TunnelMap:renewFrontierClaim(pos,dir,owner,ttlMs)
+	if owner == nil then return false,"no_owner" end
+	self:cleanupExpiredClaims()
+	local fk = self:_frontierKey(pos,dir)
+	local claim = self.claims[fk]
+	if not claim or claim.owner ~= owner then return false,"not_owner" end
+	claim.expires = now() + (ttlMs or 120000)
+	return true,claim.expires
+end
+
+function TunnelMap:releaseFrontierClaim(pos,dir,owner)
+	local fk = self:_frontierKey(pos,dir)
+	local claim = self.claims[fk]
+	if not claim then return true end
+	if owner ~= nil and claim.owner ~= owner then return false end
+	self:_releaseClaimKey(fk)
+	return true
+end
+
 function TunnelMap:_setFrontier(pos,dir,enabled,seen)
 	local fk = self:_frontierKey(pos,dir)
 	if enabled then
@@ -115,6 +178,7 @@ function TunnelMap:_setFrontier(pos,dir,enabled,seen)
 		}
 	else
 		self.frontiers[fk] = nil
+		self:_releaseClaimKey(fk)
 	end
 end
 
@@ -348,6 +412,7 @@ end
 
 function TunnelMap:findNearestFrontier(startPos,opts)
 	opts = opts or {}
+	self:cleanupExpiredClaims()
 	local startKey = TunnelMap.key(startPos)
 	if not self.nodes[startKey] then return nil,"unknown_start" end
 
@@ -358,6 +423,9 @@ function TunnelMap:findNearestFrontier(startPos,opts)
 	local positions = {[startKey]=copyPos(startPos)}
 	local expanded = 0
 	local maxNodes = opts.maxNodes or 30000
+	local claimant = opts.claimant
+	local claimTtl = opts.claimTtl or 120000
+	local sawClaimedFrontier = false
 
 	while head <= #q and expanded < maxNodes do
 		local pos = q[head]
@@ -372,13 +440,24 @@ function TunnelMap:findNearestFrontier(startPos,opts)
 				if conn and conn.state == TunnelMap.STATE.UNMAPPED then
 					local target = TunnelMap.target(pos,dir)
 					if withinRadius(target,opts.origin,opts.radius) then
-						return {
-							source=copyPos(pos),
-							target=target,
-							dir=dir,
-							path=reconstruct(came,positions,startKey,pk),
-							distance=#reconstruct(came,positions,startKey,pk),
-						},nil,expanded
+						local fk = self:_frontierKey(pos,dir)
+						local claim = self.claims[fk]
+						if not claim or claim.owner == claimant then
+							local ok,expires = self:claimFrontier(pos,dir,claimant,claimTtl)
+							if ok then
+								local path = reconstruct(came,positions,startKey,pk)
+								return {
+									source=copyPos(pos),
+									target=target,
+									dir=dir,
+									path=path,
+									distance=#path,
+									claimExpires=expires,
+								},nil,expanded
+							end
+						else
+							sawClaimedFrontier = true
+						end
 					end
 				end
 			end
@@ -394,11 +473,16 @@ function TunnelMap:findNearestFrontier(startPos,opts)
 			end
 		end
 	end
+
+	if sawClaimedFrontier then
+		return nil,"all_frontiers_claimed",expanded
+	end
 	return nil,"no_frontier",expanded
 end
 
 function TunnelMap:getStats()
-	local nodeCount,edgeCount,frontierCount,tempCount = 0,0,0,0
+	self:cleanupExpiredClaims()
+	local nodeCount,edgeCount,frontierCount,tempCount,claimCount = 0,0,0,0,0
 	for _,node in pairs(self.nodes) do
 		nodeCount = nodeCount + 1
 		for _,dir in ipairs(dirOrder) do
@@ -410,11 +494,13 @@ function TunnelMap:getStats()
 		end
 	end
 	for _ in pairs(self.frontiers) do frontierCount = frontierCount + 1 end
+	for _ in pairs(self.claims) do claimCount = claimCount + 1 end
 	return {
 		nodes=nodeCount,
 		openEdges=math.floor(edgeCount/2),
 		frontiers=frontierCount,
 		temporaryBlocks=math.floor(tempCount/2),
+		claimedFrontiers=claimCount,
 		revision=self.revision,
 	}
 end
@@ -444,6 +530,8 @@ function TunnelMap:load(fileName)
 	self.nodes = data.nodes or {}
 	self.revision = data.revision or 0
 	self.frontiers = {}
+	self.claims = {}
+	self.claimsByOwner = {}
 	for _,node in pairs(self.nodes) do
 		for dir,conn in pairs(node.connections or {}) do
 			if conn and conn.state == TunnelMap.STATE.UNMAPPED then
