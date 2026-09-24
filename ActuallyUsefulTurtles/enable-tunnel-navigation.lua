@@ -30,6 +30,11 @@ local files = {
 		targets={"turtle/send.lua"},
 	},
 	{
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/a002774f9464b8a972500ef29282be560d9702f9/ActuallyUsefulTurtles/patches/turtle-receive.lua",
+		marker="LABENHANCED_STOP_LATCH_FIX",
+		targets={"turtle/receive.lua"},
+	},
+	{
 		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/01e579503fcf8de0ec32b58643ad869a4ef4c42a/ActuallyUsefulTurtles/patches/host-global.lua",
 		marker="LABENHANCED_TUNNEL_NAV",
 		targets={"host/global.lua","runtime/global.lua"},
