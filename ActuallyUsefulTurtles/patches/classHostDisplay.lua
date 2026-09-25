@@ -262,7 +262,12 @@ function HostDisplay:initialize()
 	self.winGroups.boxHeader = Box:new(1,1,self:getWidth(),1,colors.gray)
 	self.winGroups.lblName = Label:new("TASK GROUPS",2,1,colors.white,colors.gray)
 	self.winGroups.lblSummary = Label:new("",14,1,colors.white,colors.gray)
-	self.winGroups.btnAdd = Button:new("create",14,1,8,1)
+	-- Caption plus glyph control, the same pairing the map screen uses for its
+	-- level and zoom spinners: a dimmed caption naming the action and a solid
+	-- button carrying the glyph. Green reads as create against the red close.
+	self.winGroups.lblAdd = Label:new("create",14,1,colors.lightGray,colors.gray)
+	self.winGroups.btnAdd = Button:new("+",21,1,3,1,colors.green)
+	self.winGroups.btnAdd:setTextColor(colors.black)
 	self.winGroups.taskGroupControls = {}
 	self.winGroups.groupCt = 0
 
@@ -271,6 +276,7 @@ function HostDisplay:initialize()
 	self.winGroups:addObject(self.winGroups.boxHeader)
 	self.winGroups:addObject(self.winGroups.lblName)
 	self.winGroups:addObject(self.winGroups.lblSummary)
+	self.winGroups:addObject(self.winGroups.lblAdd)
 	self.winGroups:addObject(self.winGroups.btnAdd)
 	self.winGroups:addScrollbar(true)
 	-- initial redraw
@@ -491,17 +497,22 @@ function HostDisplay:refreshGroupsHeader()
 	if not win or not win.boxHeader then return end
 
 	-- Header objects live in the inner window, which a vertical scrollbar
-	-- already narrows by one. The close button is an overlay painted on top of
-	-- that inner window's last three columns, so the header has to stop short
-	-- of it or "create" ends up underneath the X.
+	-- already narrows by one, and the close button is an overlay painted on top
+	-- of it. Derive the last usable column from where that button actually is
+	-- rather than reserving a guessed number of spaces: children of innerWin
+	-- draw at (inner.x - inner.scrollX + localX), so convert btnClose's window
+	-- coordinate into an inner-local one. The plate then butts right up against
+	-- the X with no dead gap.
 	local inner = win.innerWin
 	local width = (inner and inner.getWidth and inner:getWidth()) or self:getWidth()
 
-	local reserved = 0
+	local titleEnd = 13
+	local usable = width
 	if win.btnClose and win.btnClose.visible then
-		reserved = (win.btnClose.width or 3) + 1
+		local originX = (inner and inner.x or 1) - (inner and inner.scrollX or 0)
+		usable = math.min(usable, win.btnClose.x - 1 - originX)
 	end
-	local usable = math.max(13, width - reserved)
+	usable = math.max(titleEnd, usable)
 
 	win.boxHeader:setWidth(usable)
 	win.boxHeader:setBorderColor(colors.gray)
@@ -514,16 +525,25 @@ function HostDisplay:refreshGroupsHeader()
 		end
 	end
 
-	-- "create" is pinned to the right of the plate, the counts sit just inside
-	-- it, and the counts drop out entirely before anything can overlap.
-	local titleEnd = 13
-	local btnW = win.btnAdd.width or 8
-	local btnX = usable - btnW + 1
-	if btnX < titleEnd then btnX = titleEnd end
+	-- Right to left: the + control sits flush against the close button, its
+	-- caption one space to its left, then the counts. Each element drops out
+	-- rather than collide once the window is too narrow to hold it.
+	local btnW = win.btnAdd.width or 3
+	local btnX = math.max(titleEnd, usable - btnW + 1)
 	win.btnAdd:setPos(btnX, 1)
 
+	local caption = "create"
+	local cx = btnX - #caption - 1
+	if cx >= titleEnd then
+		win.lblAdd:setText(caption)
+		win.lblAdd:setPos(cx, 1)
+	else
+		win.lblAdd:setText("")
+		cx = btnX
+	end
+
 	local summary = string.format("%d GRP  %d ACT", total, active)
-	local sx = btnX - #summary - 2
+	local sx = cx - #summary - 2
 	if sx >= titleEnd then
 		win.lblSummary:setText(summary)
 		win.lblSummary:setPos(sx, 1)

@@ -44,10 +44,10 @@ local layout = {
 	infoX      = 29,               -- key/value block
 	infoPad    = 1,
 	dividerRow = 6,
-	-- The window's close button is a 3-wide overlay pinned to the right of the
-	-- inner window. Keep the trailing edge clear of it so the uptime cannot
-	-- slide underneath the X while the list is scrolled.
-	rightGutter = 4,
+	-- The close button overlays the inner window's last two columns (it sits at
+	-- window column W-2 while the row is only W-1 wide). Reserve exactly those
+	-- two so the row runs flush up to the X with no dead gap, same as the header.
+	rightGutter = 2,
 }
 
 -- Compact, uppercase status wording. Denser than the raw enum without
@@ -74,7 +74,11 @@ function TaskGroupControl:new(x,y,taskGroup)
 	self.__index = self
 	
 	o:setBackgroundColor(default.colors.background)
-	o:setBorderColor(default.colors.border)
+	-- LABENHANCED_GROUPS_HMI
+	-- Match the border to the background: BasicWindow:redraw draws a box whenever
+	-- the two differ, which kept the old gray card outline around every row. The
+	-- status strip and the divider carry that structure now.
+	o:setBorderColor(default.colors.background)
 
 	o.taskGroup = taskGroup or nil
 	o.mapDisplay = nil -- needed to enable the map button
