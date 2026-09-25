@@ -32,8 +32,8 @@ local files = {
     targets={"turtle/classTunnelMapper.lua"},
   },
   {
-    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/8e93e5fad24e08f799b513700b4ab1adf747560c/ActuallyUsefulTurtles/patches/turtle-receive.lua",
-    marker="LABENHANCED_STALE_CHECKPOINT_RECOVERY",
+    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/1a5babe6cfeb3da6fae48fdee55d882b22e3a5a7/ActuallyUsefulTurtles/patches/turtle-receive.lua",
+    marker="LABENHANCED_HARD_STALE_RESET",
     targets={"turtle/receive.lua"},
   },
   {
