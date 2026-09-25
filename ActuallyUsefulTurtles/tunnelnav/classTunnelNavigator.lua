@@ -38,6 +38,7 @@ function Navigator:new(miner)
 		node=miner.node,
 		maxReroutes=24,
 		tempBlockMs=5000,
+		trafficBlockMs=2500, -- LABENHANCED_SMART_TRAFFIC
 	}
 	setmetatable(o,self)
 	return o
@@ -145,33 +146,67 @@ function Navigator:_inspectDirection(dir)
 	return hasBlock,data
 end
 
-function Navigator:_recordBlocked(fromPos,dir,hasBlock,data)
+function Navigator:_recordBlocked(fromPos,dir,hasBlock,data,opts)
+	opts = opts or {}
 	local target = TunnelMap.target(fromPos,dir)
-	local state,resume,blockedUntil
+	local state,resume,blockedUntil,blockedReason
 	local name = hasBlock and data and data.name or nil
 
 	if not hasBlock or isTurtleBlock(name) then
 		state = TunnelMap.STATE.TEMPORARILY_BLOCKED
 		resume = TunnelMap.STATE.OPEN
-		blockedUntil = os.epoch("utc") + self.tempBlockMs
+		blockedReason = isTurtleBlock(name) and "turtle_traffic" or "transient_obstacle"
+		local ms = opts.tempMs
+			or (blockedReason == "turtle_traffic" and self.trafficBlockMs)
+			or self.tempBlockMs
+		blockedUntil = os.epoch("utc") + ms
 	else
 		state = TunnelMap.STATE.BLOCKED
+		blockedReason = opts.blockedReason
 		if target and self.miner.setMapValue then
 			self.miner:setMapValue(target.x,target.y,target.z,name)
 		end
 	end
 
+	local updateOpts = {
+		blockedUntil=blockedUntil,
+		resume=resume,
+		blockedReason=blockedReason,
+	}
+
 	if self.miner.queueTunnelUpdate then
-		self.miner:queueTunnelUpdate(fromPos,dir,state,{blockedUntil=blockedUntil,resume=resume})
+		self.miner:queueTunnelUpdate(fromPos,dir,state,updateOpts)
 		self.miner:flushTunnelUpdatesSync()
 	else
 		self:sendUpdates({{
 			pos=posTable(fromPos),dir=dir,state=state,
 			seen=os.epoch("utc"),blockedUntil=blockedUntil,resume=resume,
+			blockedReason=blockedReason,
 		}})
 	end
 
-	return state,name
+	return state,name,blockedReason
+end
+
+function Navigator:deferTrafficEdge(fromPos,dir,ms)
+	-- LABENHANCED_SMART_TRAFFIC
+	-- Extend a collision edge's shared cooldown so frontier selection naturally
+	-- chooses another reachable branch instead of queueing behind a stalled turtle.
+	if not fromPos or not dir then return false end
+	ms = math.max(1000,math.min(tonumber(ms) or self.trafficBlockMs,15000))
+	if self.miner.queueTunnelUpdate then
+		self.miner:queueTunnelUpdate(fromPos,dir,TunnelMap.STATE.TEMPORARILY_BLOCKED,{
+			blockedUntil=os.epoch("utc")+ms,
+			resume=TunnelMap.STATE.OPEN,
+			blockedReason="turtle_traffic",
+		})
+		return self.miner:flushTunnelUpdatesSync()
+	end
+	return self:sendUpdates({{
+		pos=posTable(fromPos),dir=dir,state=TunnelMap.STATE.TEMPORARILY_BLOCKED,
+		seen=os.epoch("utc"),blockedUntil=os.epoch("utc")+ms,
+		resume=TunnelMap.STATE.OPEN,blockedReason="turtle_traffic",
+	}})
 end
 
 function Navigator:moveAdjacent(target)
@@ -204,8 +239,11 @@ function Navigator:moveAdjacent(target)
 		-- and route through the upper half of the 2-high tunnel instead.
 		return false,"decoration",name
 	end
-	local state
-	state,name = self:_recordBlocked(from,dir,hasBlock,data)
+	local state,blockedReason
+	state,name,blockedReason = self:_recordBlocked(from,dir,hasBlock,data)
+	if blockedReason == "turtle_traffic" then
+		return false,"traffic",name
+	end
 	return false,state,name
 end
 
