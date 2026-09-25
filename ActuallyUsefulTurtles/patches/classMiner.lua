@@ -3184,6 +3184,35 @@ function Miner:mineArea(start, finish)
 			self:returnHome()
 			self:error("UNABLE TO GET TO AREA") -- resumable
 		else
+			-- The shared-spine corner may deliberately differ from the nearest
+			-- corner chosen before travel. Recompute ALL mining geometry from
+			-- the final start/finish so row direction and vertical direction
+			-- cannot inherit stale values from the pre-access position.
+			diff = finish - start
+			width = math.abs(diff.x)
+			height = math.abs(diff.y)
+			depth = math.abs(diff.z)
+
+			if width >= depth then
+				orientation = (diff.x >= 0) and 3 or 1
+			else
+				orientation = (diff.z >= 0) and 0 or 2
+			end
+
+			if orientation%2 == 0 then
+				rowLength = depth
+				rows = (width+rowFactor)/rowFactor
+			else
+				rowLength = width
+				rows = (depth+rowFactor)/rowFactor
+			end
+			if diff.y < 0 then
+				levels = math.floor(((-height-levelFactor)/levelFactor)+0.5)
+			else
+				levels = math.floor(((height+levelFactor)/levelFactor)+0.5)
+			end
+			rows = math.floor(rows+0.5)
+
 			self:turnTo(orientation)
 			self:setActiveMiningBounds(start,finish)
 
