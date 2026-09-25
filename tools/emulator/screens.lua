@@ -89,11 +89,12 @@ end
 -- The "new group" panel, as HostDisplay:addGroup builds it: a Window filling
 -- the Groups page. `stage` picks how far through the flow to render.
 function screens.newgroup(global, say)
-	local Window = require("classWindow")
 	local TaskGroupSelector = require("classTaskGroupSelector")
 
-	local w, h = term.getSize()
-	local page = Window:new(1, 1, w, h)
+	-- Render the real Groups page behind the dialog. The panel is judged against
+	-- what actually sits under it - the group rows and their gray plates - not a
+	-- blank window.
+	local page = screens.groups(global, say)
 
 	local sel = TaskGroupSelector:new(1, 1, global.taskManager, false)
 	page:addObject(sel)
@@ -137,6 +138,28 @@ function screens.newgroup(global, say)
 	say("newgroup stage=%s w=%d h=%d divider=%s action=%s",
 		stage, sel.width, sel.height, tostring(sel.dividerRow), tostring(sel.actionRow))
 	return page
+end
+
+-- Map view with two group outlines, to check the id labels.
+function screens.map(global, say)
+	local MapDisplay = require("classMapDisplay")
+	local fakes = require("fakes")
+
+	local w, h = term.getSize()
+	local md = MapDisplay:new(1, 1, w, h)
+	md:setMap(fakes.buildMap())
+	md:setMid(0, -59, 0)
+
+	-- two ACTIVE groups: both green by status, so only the label tells them apart
+	md.areas = {
+		{ start = {x=-20,y=-59,z=-16}, finish = {x=-4,y=-59,z=-2},
+		  color = colors.green, groupId = "89d9bc" },
+		{ start = {x=6,y=-59,z=4}, finish = {x=22,y=-59,z=18},
+		  color = colors.green, groupId = "3587aa" },
+	}
+	say("map: %d outlines, both green - labels must disambiguate", #md.areas)
+
+	return md
 end
 
 function screens.names()

@@ -160,9 +160,33 @@ function M.buildGlobal(say, scenarioName)
 	return g
 end
 
+-- Stand-in for ChunkyMap. Borrows the REAL id arithmetic from classChunkyMap so
+-- coordinates behave exactly as they do in game, and fakes only the block data:
+-- a synthetic strip mine, so the map has recognisable corridors to look at.
+function M.buildMap()
+	local ChunkyMap = require("classChunkyMap")
+	return {
+		chunkSize = 16,
+		xyzToChunkId = ChunkyMap.xyzToChunkId,
+		xyzToRelativeChunkId = ChunkyMap.xyzToRelativeChunkId,
+		-- a chunk only needs _lastChange for the redraw freshness check
+		accessChunk = function() return { _lastChange = 0 } end,
+		getBlockId = function(_, x, y, z)
+			if z % 4 == 0 then return 0 end   -- strip corridor (air)
+			if x % 16 == 0 then return 0 end   -- spine
+			return 1                           -- stone
+		end,
+	}
+end
+
 M.config = {
 	get = function() return nil end,
 	set = function() end,
+	-- redrawOverlay walks these to draw home/refuel markers
+	stations = {
+		turtles = { { pos = { x = 4, y = -59, z = 0 } } },
+		refuel = { { pos = { x = -4, y = -59, z = 0 } } },
+	},
 }
 
 return M

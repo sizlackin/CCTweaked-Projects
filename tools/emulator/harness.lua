@@ -41,7 +41,9 @@ say("screen=%s scenario=%s", screen, scenario)
 local fakes = require("fakes")
 _G.global = fakes.buildGlobal(say, scenario)
 _G.global.__stage = scenario
-_G.config = _G.config or fakes.config
+-- CraftOS-PC provides its own `config` API, so this must overwrite rather than
+-- defer to it - the UI expects the controller's config table (stations etc).
+_G.config = fakes.config
 
 -- ---------------------------------------------------------------------------
 -- Render

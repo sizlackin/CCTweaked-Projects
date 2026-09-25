@@ -81,7 +81,11 @@ function TaskGroupSelector:new(x,y, taskManager, slowStart)
 	self.__index = self
 	
 	o:setBackgroundColor(default.colors.background)
-	o:setBorderColor(default.colors.border)
+	-- LABENHANCED_NEWGROUP_HMI
+	-- A modal needs an edge brighter than whatever it covers. The default gray
+	-- border was the same gray as the group rows' data plates underneath, so the
+	-- panel dissolved into the page behind it.
+	o:setBorderColor(colors.lightGray)
 	
 	o.mapDisplay = nil
 	o.positions = {}

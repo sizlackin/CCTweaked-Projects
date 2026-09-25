@@ -1256,7 +1256,38 @@ function MapDisplay:redrawOverlay()
 			end
 		end
 	end
+	self:drawGroupLabels()
 end
+
+-- LABENHANCED_GROUP_OUTLINE_LABEL
+-- Outlines are coloured by status, so several groups mining at once all draw
+-- the same green rectangle and you cannot tell which is which. Colour cannot
+-- disambiguate them - every hue here already means something - so name them
+-- instead. Works for any number of groups and leaves status colour intact.
+function MapDisplay:drawGroupLabels()
+	if not self.areas then return end
+	local width = self:getWidth()
+	for _,area in ipairs(self.areas) do
+		if area.groupId and area.start and area.finish then
+			local lo = {
+				x = math.min(area.start.x,area.finish.x),
+				z = math.min(area.start.z,area.finish.z),
+			}
+			if self:isWithin(lo.x,nil,lo.z) then
+				local text = string.sub(tostring(area.groupId),1,4)
+				local x,y = self:transformPos(lo)
+				-- keep the whole label on screen rather than clipping it
+				if x + #text - 1 > width then x = width - #text + 1 end
+				if x < 1 then x = 1 end
+				local fg = blitTab[area.color or colors.white]
+				local bg = blitTab[colors.black]
+				self:setCursorPos(x,y)
+				self:blit(text,string.rep(fg,#text),string.rep(bg,#text))
+			end
+		end
+	end
+end
+
 
 -- LABENHANCED_PRECISE_SELECTION_OUTLINE
 -- Pixel p covers blocks [(p-1)*zoom + origin, p*zoom - 1 + origin]. Return the
