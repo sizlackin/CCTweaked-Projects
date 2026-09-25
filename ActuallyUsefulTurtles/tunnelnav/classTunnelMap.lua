@@ -65,6 +65,7 @@ function TunnelMap:new(opts)
 		frontiers = {},
 		claims = {}, -- LABENHANCED_MULTI_MAPPER_CLAIMS
 		claimsByOwner = {},
+		routeIntents = {}, -- LABENHANCED_SMART_FRONTIER_SCORING
 		revision = 0,
 		dirty = false,
 		lastSave = 0,
@@ -105,12 +106,122 @@ function TunnelMap:_frontierKey(pos,dir)
 	return TunnelMap.key(pos).."|"..dir
 end
 
+function TunnelMap:cleanupExpiredIntents()
+	local t = now()
+	for owner,intent in pairs(self.routeIntents or {}) do
+		if not intent.expires or intent.expires <= t then
+			self.routeIntents[owner] = nil
+		end
+	end
+end
+
+function TunnelMap:setRouteIntent(owner,path,goal,ttlMs,kind)
+	if owner == nil then return false end
+	self:cleanupExpiredIntents()
+	local keys = {}
+	for _,p in ipairs(path or {}) do
+		keys[TunnelMap.key(p)] = true
+	end
+	if goal then keys[TunnelMap.key(goal)] = true end
+	self.routeIntents[owner] = {
+		pathKeys=keys,
+		goal=goal and copyPos(goal) or nil,
+		expires=now() + (ttlMs or 120000),
+		kind=kind or "route",
+	}
+	return true
+end
+
+function TunnelMap:clearRouteIntent(owner)
+	if owner == nil then return false end
+	self.routeIntents[owner] = nil
+	return true
+end
+
+function TunnelMap:_intentNodePenalty(pos,claimant)
+	self:cleanupExpiredIntents()
+	local key = TunnelMap.key(pos)
+	local penalty = 0
+	for owner,intent in pairs(self.routeIntents) do
+		if owner ~= claimant and intent.pathKeys and intent.pathKeys[key] then
+			penalty = penalty + 2.5
+		end
+	end
+	return penalty
+end
+
+function TunnelMap:_nodeTrafficPenalty(pos)
+	local node = self:getNode(pos)
+	if not node then return 0 end
+	local penalty = 0
+	for _,dir in ipairs(dirOrder) do
+		local conn = self:getConnection(node,dir)
+		if conn and conn.state == TunnelMap.STATE.TEMPORARILY_BLOCKED then
+			if conn.blockedReason == "turtle_traffic" then
+				penalty = penalty + 4
+			else
+				penalty = penalty + 1
+			end
+		end
+	end
+	return math.min(penalty,8)
+end
+
+function TunnelMap:_frontierPotential(node)
+	local count = 0
+	for _,dir in ipairs(dirOrder) do
+		local conn = self:getConnection(node,dir)
+		if conn and conn.state == TunnelMap.STATE.UNMAPPED then
+			count = count + 1
+		end
+	end
+	return count
+end
+
+function TunnelMap:_workSeparationPenalty(pos,claimant)
+	self:cleanupExpiredClaims()
+	self:cleanupExpiredIntents()
+	local nearest = nil
+	local seenOwners = {}
+
+	for owner,intent in pairs(self.routeIntents) do
+		if owner ~= claimant and intent.goal then
+			seenOwners[owner] = true
+			local d = manhattan(pos,intent.goal)
+			if not nearest or d < nearest then nearest = d end
+		end
+	end
+
+	-- Compatibility fallback for claims created before route-intent support.
+	for fk,claim in pairs(self.claims) do
+		if claim.owner ~= claimant and not seenOwners[claim.owner] then
+			local f = self.frontiers[fk]
+			if f then
+				local target = {x=f.tx,y=f.ty,z=f.tz}
+				local d = manhattan(pos,target)
+				if not nearest or d < nearest then nearest = d end
+			end
+		end
+	end
+
+	if not nearest then return 0,nil end
+	if nearest <= 8 then
+		return 18 + (8-nearest)*1.5,nearest
+	elseif nearest <= 16 then
+		return 4 + (16-nearest)*1.25,nearest
+	elseif nearest <= 32 then
+		return (32-nearest)*0.25,nearest
+	end
+	return 0,nearest
+end
+
 function TunnelMap:_releaseClaimKey(fk)
 	local claim = self.claims[fk]
 	if not claim then return false end
 	if self.claimsByOwner[claim.owner] == fk then
 		self.claimsByOwner[claim.owner] = nil
 	end
+	self:clearRouteIntent(claim.owner)
 	self.claims[fk] = nil
 	return true
 end
@@ -154,6 +265,8 @@ function TunnelMap:renewFrontierClaim(pos,dir,owner,ttlMs)
 	local claim = self.claims[fk]
 	if not claim or claim.owner ~= owner then return false,"not_owner" end
 	claim.expires = now() + (ttlMs or 120000)
+	local intent = self.routeIntents and self.routeIntents[owner]
+	if intent then intent.expires = claim.expires end
 	return true,claim.expires
 end
 
@@ -371,7 +484,8 @@ local function reconstruct(came,positions,startKey,endKey)
 	return path
 end
 
-function TunnelMap:findPath(startPos,goalPos,maxNodes)
+function TunnelMap:findPath(startPos,goalPos,maxNodes,opts)
+	opts = opts or {}
 	maxNodes = maxNodes or 30000
 	local startKey = TunnelMap.key(startPos)
 	local goalKey = TunnelMap.key(goalPos)
@@ -397,6 +511,8 @@ function TunnelMap:findPath(startPos,goalPos,maxNodes)
 				local nk = TunnelMap.key(n.pos)
 				if not closed[nk] then
 					local tentative = (g[cur.key] or math.huge) + 1
+						+ self:_intentNodePenalty(n.pos,opts.claimant)
+						+ self:_nodeTrafficPenalty(n.pos)
 					if not g[nk] or tentative < g[nk] then
 						g[nk] = tentative
 						came[nk] = cur.key
@@ -419,64 +535,124 @@ end
 function TunnelMap:findNearestFrontier(startPos,opts)
 	opts = opts or {}
 	self:cleanupExpiredClaims()
+	self:cleanupExpiredIntents()
 	local startKey = TunnelMap.key(startPos)
 	if not self.nodes[startKey] then return nil,"unknown_start" end
 
-	local q = {copyPos(startPos)}
-	local head = 1
-	local visited = {[startKey]=true}
+	-- LABENHANCED_SMART_FRONTIER_SCORING
+	-- Search the reachable road graph with weighted cost rather than taking the
+	-- first frontier encountered. Other turtles' intended routes, active traffic,
+	-- nearby assigned work, branch potential and branch-rescue discoveries all
+	-- influence which frontier is selected.
+	local open = {}
 	local came = {}
 	local positions = {[startKey]=copyPos(startPos)}
+	local cost = {[startKey]=0}
+	local steps = {[startKey]=0}
+	local closed = {}
+	heapPush(open,{key=startKey,score=0})
+
 	local expanded = 0
 	local maxNodes = opts.maxNodes or 30000
 	local claimant = opts.claimant
 	local claimTtl = opts.claimTtl or 120000
 	local sawClaimedFrontier = false
+	local best = nil
 
-	while head <= #q and expanded < maxNodes do
-		local pos = q[head]
-		head = head + 1
-		expanded = expanded + 1
-		local pk = TunnelMap.key(pos)
-		local node = self.nodes[pk]
+	while #open > 0 and expanded < maxNodes do
+		local cur = heapPop(open)
+		if cur and not closed[cur.key] then
+			closed[cur.key] = true
+			expanded = expanded + 1
+			local pos = positions[cur.key] or TunnelMap.parseKey(cur.key)
+			local node = self.nodes[cur.key]
+			local baseCost = cost[cur.key] or math.huge
 
-		if withinRadius(pos,opts.origin,opts.radius) then
-			for _,dir in ipairs(dirOrder) do
-				local conn = self:getConnection(node,dir)
-				if conn and conn.state == TunnelMap.STATE.UNMAPPED then
-					local target = TunnelMap.target(pos,dir)
-					if withinRadius(target,opts.origin,opts.radius) then
-						local fk = self:_frontierKey(pos,dir)
-						local claim = self.claims[fk]
-						if not claim or claim.owner == claimant then
-							local ok,expires = self:claimFrontier(pos,dir,claimant,claimTtl)
-							if ok then
-								local path = reconstruct(came,positions,startKey,pk)
-								return {
-									source=copyPos(pos),
-									target=target,
-									dir=dir,
-									path=path,
-									distance=#path,
-									claimExpires=expires,
-								},nil,expanded
+			if withinRadius(pos,opts.origin,opts.radius) then
+				for _,dir in ipairs(dirOrder) do
+					local conn = self:getConnection(node,dir)
+					if conn and conn.state == TunnelMap.STATE.UNMAPPED then
+						local target = TunnelMap.target(pos,dir)
+						if withinRadius(target,opts.origin,opts.radius) then
+							local fk = self:_frontierKey(pos,dir)
+							local claim = self.claims[fk]
+							if not claim or claim.owner == claimant then
+								local potential = self:_frontierPotential(node)
+								local spreadPenalty,nearestWork =
+									self:_workSeparationPenalty(pos,claimant)
+								local branchBonus = math.min(math.max(potential-1,0)*3,9)
+								local rescueBonus =
+									(conn.blockedReason == "branch_rescue") and 5 or 0
+								local frontierData = self.frontiers[fk]
+								local ageBonus = 0
+								if frontierData and frontierData.seen then
+									ageBonus = math.min(
+										math.max(now()-frontierData.seen,0)/30000,
+										4
+									)
+								end
+
+								local score = baseCost + spreadPenalty
+									- branchBonus - rescueBonus - ageBonus
+
+								if not best or score < best.score
+								or (score == best.score
+									and (steps[cur.key] or math.huge) < best.distance) then
+									best = {
+										source=copyPos(pos),
+										target=target,
+										dir=dir,
+										endKey=cur.key,
+										score=score,
+										distance=steps[cur.key] or 0,
+										branchPotential=potential,
+										nearestOtherWork=nearestWork,
+										routeCost=baseCost,
+										spreadPenalty=spreadPenalty,
+										branchBonus=branchBonus,
+										rescueBonus=rescueBonus,
+										ageBonus=ageBonus,
+									}
+								end
+							else
+								sawClaimedFrontier = true
 							end
-						else
-							sawClaimedFrontier = true
 						end
 					end
 				end
 			end
-		end
 
-		for _,n in ipairs(self:getOpenNeighbors(pos)) do
-			local nk = TunnelMap.key(n.pos)
-			if not visited[nk] and withinRadius(n.pos,opts.origin,opts.radius) then
-				visited[nk] = true
-				came[nk] = pk
-				positions[nk] = n.pos
-				q[#q+1] = n.pos
+			for _,n in ipairs(self:getOpenNeighbors(pos)) do
+				local nk = TunnelMap.key(n.pos)
+				if not closed[nk] and withinRadius(n.pos,opts.origin,opts.radius) then
+					local nextCost = baseCost + 1
+						+ self:_intentNodePenalty(n.pos,claimant)
+						+ self:_nodeTrafficPenalty(n.pos)
+					if not cost[nk] or nextCost < cost[nk] then
+						cost[nk] = nextCost
+						steps[nk] = (steps[cur.key] or 0) + 1
+						came[nk] = cur.key
+						positions[nk] = n.pos
+						heapPush(open,{key=nk,score=nextCost})
+					end
+				end
 			end
+
+			if expanded % 500 == 0 then sleep(0) end
+		end
+	end
+
+	if best then
+		local ok,expires = self:claimFrontier(
+			best.source,best.dir,claimant,claimTtl
+		)
+		if ok then
+			local path = reconstruct(came,positions,startKey,best.endKey)
+			best.endKey = nil
+			best.path = path
+			best.claimExpires = expires
+			self:setRouteIntent(claimant,path,best.target,claimTtl,"mapping")
+			return best,nil,expanded
 		end
 	end
 
@@ -501,12 +677,16 @@ function TunnelMap:getStats()
 	end
 	for _ in pairs(self.frontiers) do frontierCount = frontierCount + 1 end
 	for _ in pairs(self.claims) do claimCount = claimCount + 1 end
+	self:cleanupExpiredIntents()
+	local intentCount = 0
+	for _ in pairs(self.routeIntents) do intentCount = intentCount + 1 end
 	return {
 		nodes=nodeCount,
 		openEdges=math.floor(edgeCount/2),
 		frontiers=frontierCount,
 		temporaryBlocks=math.floor(tempCount/2),
 		claimedFrontiers=claimCount,
+		activeRouteIntents=intentCount,
 		revision=self.revision,
 	}
 end
@@ -538,6 +718,7 @@ function TunnelMap:load(fileName)
 	self.frontiers = {}
 	self.claims = {}
 	self.claimsByOwner = {}
+	self.routeIntents = {}
 	for _,node in pairs(self.nodes) do
 		for dir,conn in pairs(node.connections or {}) do
 			if conn and conn.state == TunnelMap.STATE.UNMAPPED then
