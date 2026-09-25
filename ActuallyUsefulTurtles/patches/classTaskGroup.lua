@@ -358,34 +358,37 @@ end
 
 function TaskGroup:cancel()
 	print("cancelling", #self.tasks, "tasks for group", self.shortId)
-	for _,task in ipairs(self.tasks) do
-		local turtle = self.turtles and self.turtles[task.turtleId]
-		local state = turtle and turtle.state
 
-		-- LABENHANCED_STALE_CHECKPOINT_RECOVERY
-		-- If the turtle says it has no live task stack but the controller still
-		-- thinks this assignment is running, a normal synchronous cancel can
-		-- time out forever against a ghost checkpoint restore. Clear that stale
-		-- assignment directly and make the UI truthful immediately.
-		if state and state.online and state.task == nil
-		and task.status ~= "completed" and task.status ~= "deleted"
-		and task.status ~= "cancelled" then
-			print("clearing stale idle task",task.shortId,"turtle",task.turtleId)
-			if self.taskManager and self.taskManager.node then
+	for _,task in ipairs(self.tasks) do
+		local terminal = task.status == "completed"
+			or task.status == "deleted"
+			or task.status == "cancelled"
+
+		if not terminal then
+			local turtle = self.turtles and self.turtles[task.turtleId]
+			local state = turtle and turtle.state
+
+			-- LABENHANCED_HARD_STALE_RESET
+			-- Cancel is an explicit destructive action. Do not wait indefinitely
+			-- for a checkpoint-restored turtle to cooperate with the normal task
+			-- cancellation handshake: clear its persisted assignment and reboot.
+			if state and state.online
+			and self.taskManager and self.taskManager.node then
+				print("hard cancelling task",task.shortId,"turtle",task.turtleId)
 				self.taskManager.node:send(
 					task.turtleId,
-					{"FORCE_CLEAR_STALE_TASK",task.id},
+					{"FORCE_CLEAR_STALE_TASK",task.id,true},
 					false,false
 				)
 			end
+
 			task:setStatus("cancelled")
-		else
-			local ok = task:cancel()
-			if not ok then
-				print("WARNING: cancel failed",task.shortId,"turtle",task.turtleId)
+			if self.taskManager and self.taskManager.cancelledTasks then
+				self.taskManager.cancelledTasks[task.id] = task
 			end
 		end
 	end
+
 	self:setStatus("cancelled")
 	if self.taskManager and self.taskManager.save then
 		self.taskManager:save()
