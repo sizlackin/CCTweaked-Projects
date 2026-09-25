@@ -2467,7 +2467,7 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 				tunnelDirection = -1 * directionFactor,
 				startPos = vector.new(self.pos.x, self.pos.y, self.pos.z),
 				startOrientation = self.orientation,
-				torchSide = -1,
+				torchSide = -1, -- fixed left wall
 			},
 			args = tablepack(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect),
 		}
@@ -2559,18 +2559,19 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 					if self.activeMiningBounds and not noInspect then
 						self.autoTunnelTorches = true
 						self.tunnelTorchSteps = 0
-						self.tunnelTorchSide = vars.torchSide or -1
+						self.tunnelTorchSide = -1
 
 						-- Seed each row with a light at the entrance, then place the
 						-- next one just before vanilla block light would reach 0.
-						self:placeTunnelTorchNiche(self.tunnelTorchSide)
-						vars.torchSide = self.tunnelTorchSide
+						-- Every torch goes on the LEFT wall relative to travel.
+						self:placeTunnelTorchNiche(-1)
+						vars.torchSide = -1
 					end
 
 					self:tunnelStraight(rowLength, noInspect)
 
 					if self.autoTunnelTorches then
-						vars.torchSide = self.tunnelTorchSide
+						vars.torchSide = -1
 						self.autoTunnelTorches = false
 						self.tunnelTorchSteps = 0
 						self.checkPointer:save(self)
@@ -3777,7 +3778,10 @@ function Miner:placeTunnelTorchNiche(side)
 	end
 
 	if placed then
-		self.tunnelTorchSide = -sideOffset
+		-- LABENHANCED_LEFT_WALL_TORCHES
+		-- Keep every mining-row torch on the LEFT wall relative to the
+		-- turtle's current direction of travel. Do not alternate sides.
+		self.tunnelTorchSide = -1
 		self.tunnelTorchSteps = 0
 	end
 	return placed
