@@ -257,8 +257,9 @@ end
 function Navigator:followPath(path)
 	for i=1,#path do
 		local p = path[i]
-		if not self:moveAdjacent(vector.new(p.x,p.y,p.z)) then
-			return false,i
+		local ok,reason,name = self:moveAdjacent(vector.new(p.x,p.y,p.z))
+		if not ok then
+			return false,i,reason,name
 		end
 		if i % 32 == 0 then sleep(0) end
 	end
@@ -271,6 +272,10 @@ function Navigator:navigateTo(goal,opts)
 	if self.miner.pos == goal then return true end
 
 	local attempts = 0
+	local trafficHits = 0
+	local trafficStarted = nil
+	local trafficTimeoutMs = opts.trafficTimeoutMs or 20000
+
 	while attempts < (opts.maxReroutes or self.maxReroutes) do
 		attempts = attempts + 1
 		local path,reason,stats = self:requestRoute(goal)
@@ -283,7 +288,7 @@ function Navigator:navigateTo(goal,opts)
 				return false,reason,stats
 			end
 		else
-			local ok = self:followPath(path)
+			local ok,failedStep,moveReason = self:followPath(path)
 			if ok and self.miner.pos == goal then
 				if self.miner.flushTunnelUpdatesSync then
 					self.miner:flushTunnelUpdatesSync()
@@ -291,9 +296,33 @@ function Navigator:navigateTo(goal,opts)
 				self:clearRouteIntent()
 				return true
 			end
-			-- A failed step already updated the authoritative road graph.
-			-- Ask the controller for a fresh route instead of digging.
-			sleep(0)
+
+			if moveReason == "traffic" then
+				-- LABENHANCED_COOP_MINING_TRAFFIC
+				-- The failed edge is already shared as temporarily blocked, so
+				-- the next controller route will prefer any open alternative.
+				-- If possible, step into the 2-high tunnel headspace briefly so
+				-- an opposing turtle can physically pass instead of deadlocking.
+				trafficHits = trafficHits + 1
+				trafficStarted = trafficStarted or os.epoch("utc")
+				if self.miner.yieldForTurtleTraffic then
+					self.miner:yieldForTurtleTraffic(3)
+				end
+
+				local jammedFor = os.epoch("utc") - trafficStarted
+				if trafficHits >= 8 or jammedFor >= trafficTimeoutMs then
+					print("TURTLE TRAFFIC JAM - ABANDONING ROUTE")
+					self:clearRouteIntent()
+					return false,"traffic_jam_timeout",stats
+				end
+				sleep(0.5)
+			else
+				-- We made meaningful progress or encountered non-turtle terrain;
+				-- don't let an old traffic encounter poison a later route.
+				trafficHits = 0
+				trafficStarted = nil
+				sleep(0)
+			end
 		end
 	end
 
