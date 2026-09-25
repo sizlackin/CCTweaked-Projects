@@ -497,6 +497,7 @@ function TaskGroupSelector:updateAreaPreview()
 			start = previewStart,
 			finish = previewFinish,
 			color = colors.red,
+			selectionOutline = true,
 			areaPreviewOwner = self,
 		}
 		table.insert(self.mapDisplay.areas, self.selectionPreview)
