@@ -303,15 +303,20 @@ end
 
 local function drawModeToggle(cb)
 	if not (cb.parent and cb.visible) then return end
-	local bg = colors.gray
-	local accent = cb.active and cb.accentColor or colors.gray
-	local textColor = cb.active and colors.white or colors.lightGray
+	local bg = cb.backgroundColor
 
-	-- Match MAP OPTIONS: colored status cell with a black center dot,
-	-- then a plain lowercase label on the gray plate.
-	cb.parent:drawFilledBox(cb.x, cb.y, cb.width, 1, bg)
-	cb.parent:drawText(cb.x, cb.y, "\149", colors.black, accent)
-	cb.parent:drawText(cb.x + 1, cb.y, cb.labelText, textColor, bg)
+	-- Use the exact same 2-character SCADA lamp construction as MAP OPTIONS.
+	-- The lamp occupies x/x+1; the label starts at x+2, so the two can never overlap.
+	if cb.active then
+		cb.parent:drawText(cb.x, cb.y, "\136", colors.gray, cb.accentColor)
+		cb.parent:drawText(cb.x + 1, cb.y, "\149", cb.accentColor, bg)
+	else
+		cb.parent:drawText(cb.x, cb.y, "\136", bg, colors.gray)
+		cb.parent:drawText(cb.x + 1, cb.y, "\149", colors.gray, bg)
+	end
+
+	local textColor = cb.active and colors.white or colors.lightGray
+	cb.parent:drawText(cb.x + 2, cb.y, cb.labelText, textColor, bg)
 end
 
 function TaskGroupSelector:clearModeControls()
