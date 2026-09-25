@@ -255,14 +255,22 @@ function HostDisplay:initialize()
 	
 	
 	-- init groups window
-	self.winGroups.lblName = Label:new("Task Groups",1,1)
+	-- LABENHANCED_GROUPS_HMI
+	-- Header strip: a full-width plate carrying the page title on the left and
+	-- glanceable counts on the right, with create as a solid control. The plate
+	-- is registered first so the labels and the button draw over it.
+	self.winGroups.boxHeader = Box:new(1,1,self:getWidth(),1,colors.gray)
+	self.winGroups.lblName = Label:new("TASK GROUPS",2,1,colors.white,colors.gray)
+	self.winGroups.lblSummary = Label:new("",14,1,colors.white,colors.gray)
 	self.winGroups.btnAdd = Button:new("create",14,1,8,1)
 	self.winGroups.taskGroupControls = {}
 	self.winGroups.groupCt = 0
-	
+
 	self.winGroups.btnAdd.click = function() return self:addGroup() end
-	
+
+	self.winGroups:addObject(self.winGroups.boxHeader)
 	self.winGroups:addObject(self.winGroups.lblName)
+	self.winGroups:addObject(self.winGroups.lblSummary)
 	self.winGroups:addObject(self.winGroups.btnAdd)
 	self.winGroups:addScrollbar(true)
 	-- initial redraw
@@ -474,13 +482,46 @@ function HostDisplay:addGroup()
 	return true
 end
 
+function HostDisplay:refreshGroupsHeader()
+	-- LABENHANCED_GROUPS_HMI
+	-- Keep the header plate spanning the window and show how many groups exist
+	-- and how many are running, so the page answers "is anything working?"
+	-- without opening a group.
+	local win = self.winGroups
+	if not win or not win.boxHeader then return end
+
+	local width = self:getWidth()
+	win.boxHeader:setWidth(width)
+	win.boxHeader:setBorderColor(colors.gray)
+
+	local total, active = 0, 0
+	for _,group in pairs(self.taskManager:getGroups()) do
+		if group.status ~= "new" then
+			total = total + 1
+			if group:isActive() then active = active + 1 end
+		end
+	end
+
+	local summary = string.format("%d GRP  %d ACT", total, active)
+	win.lblSummary:setText(summary)
+
+	-- create sits at the trailing edge, the summary just inside it
+	local btnW = win.btnAdd.width or 8
+	local btnX = math.max(14, width - btnW)
+	win.btnAdd:setPos(btnX, 1)
+
+	local sx = btnX - #summary - 1
+	if sx < 14 then sx = 14 end
+	win.lblSummary:setPos(sx, 1)
+end
+
 function HostDisplay:updateGroups()
-	if self.winGroups.visible then 
+	if self.winGroups.visible then
 		local taskControls = self.winGroups.taskGroupControls
 		local groups = self.taskManager:getGroups()
 		for id,taskGroup in pairs(groups) do
 			if taskGroup.status ~= "new" then
-				if not taskControls[id] then 		
+				if not taskControls[id] then
 					taskControls[id] = TaskGroupControl:new(1,3+6*self.winGroups.groupCt, taskGroup)
 					self.winGroups:addObject(taskControls[id])
 					taskControls[id]:fillWidth()
@@ -489,6 +530,7 @@ function HostDisplay:updateGroups()
 				end
 			end
 		end
+		self:refreshGroupsHeader()
 		self.winGroups:redraw()
 	end
 end

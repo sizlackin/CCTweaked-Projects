@@ -46,7 +46,7 @@ ActuallyUsefulTurtles/controller/gui/classCheckBox.lua	gui/classCheckBox.lua	ven
 ActuallyUsefulTurtles/patches/classChoiceSelector.lua	gui/classChoiceSelector.lua	patch
 ActuallyUsefulTurtles/controller/gui/classFrame.lua	gui/classFrame.lua	vendor
 ActuallyUsefulTurtles/controller/gui/classGPU.lua	gui/classGPU.lua	vendor
-ActuallyUsefulTurtles/controller/gui/classHostDisplay.lua	gui/classHostDisplay.lua	vendor
+ActuallyUsefulTurtles/patches/classHostDisplay.lua	gui/classHostDisplay.lua	patch
 ActuallyUsefulTurtles/controller/gui/classLabel.lua	gui/classLabel.lua	vendor
 ActuallyUsefulTurtles/patches/classMapDisplay.lua	gui/classMapDisplay.lua	patch
 ActuallyUsefulTurtles/controller/gui/classMonitor.lua	gui/classMonitor.lua	vendor

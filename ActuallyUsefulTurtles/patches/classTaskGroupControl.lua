@@ -2,7 +2,7 @@
 local Button = require("classButton")
 local Label = require("classLabel")
 local BasicWindow = require("classBasicWindow")
-local Frame = require("classFrame")
+local Box = require("classBox")
 local TaskSelector = require("classTaskSelector")
 local ChoiceSelector = require("classChoiceSelector")
 local GroupDetails = require("classTaskGroupDetails")
@@ -15,10 +15,52 @@ local default = {
 		okay = colors.orange,
 		bad = colors.red,
 		neutral = colors.white,
+		-- LABENHANCED_GROUPS_HMI
+		-- Plates and captions follow the map screen: grouped values sit on a
+		-- gray plate, captions are dimmed, values stay white.
+		plate = colors.gray,
+		caption = colors.lightGray,
+		value = colors.white,
+		divider = colors.gray,
 	},
 	width = 50,
 	height = 7,
 }
+
+-- LABENHANCED_GROUPS_HMI
+-- Every column lives here so the drawn cells and the click areas of the
+-- buttons cannot drift apart. Button x/width are deliberately unchanged from
+-- the original layout: openOptions anchors its ChoiceSelector to btnOptions.
+local layout = {
+	stripX     = 1,  stripW = 2,   -- vertical status strip
+	headerRow  = 2,
+	dataTop    = 3,                -- data occupies rows 3..5
+	dataRows   = 3,
+	coordX     = 4,  coordW = 16,  -- X/Y/Z plate
+	axisX      = 5,
+	startEnd   = 12,               -- start value is right-aligned to here
+	finishEnd  = 18,               -- finish value is right-aligned to here
+	btnX       = 21, btnW  = 6,
+	infoX      = 29,               -- key/value block
+	infoPad    = 1,
+	dividerRow = 6,
+}
+
+-- Compact, uppercase status wording. Denser than the raw enum without
+-- inventing new states: the value still comes from group:getStatus().
+local function statusText(status)
+	if not status then return "UNKNOWN" end
+	local text = tostring(status):upper():gsub("_", " ")
+	text = text:gsub("^PARTIALLY ", "PART ")
+	return text
+end
+
+local function padLeft(text, width)
+	text = tostring(text)
+	local pad = width - #text
+	if pad > 0 then return string.rep(" ", pad) .. text end
+	return text
+end
 
 local TaskGroupControl = BasicWindow:new()
 
@@ -152,82 +194,133 @@ end
 
 function TaskGroupControl:onResize() -- super override
 	BasicWindow.onResize(self) -- super
-	
-	self.frmId:setWidth(self.width)
+
+	-- LABENHANCED_GROUPS_HMI
+	-- The right-hand plate is the only element that tracks the window width.
+	if self.boxInfo then
+		self.boxInfo:setWidth(math.max(1, self.width - layout.infoX))
+	end
 end
 
 function TaskGroupControl:redraw() -- super override
 	self:refresh()
-	
+
 	BasicWindow.redraw(self) -- super
-	
-	for i=3,5 do
-		self:setCursorPos(19,i)
-		self:blit("|",colors.toBlit(colors.lightGray),colors.toBlit(self.backgroundColor))
+
+	-- LABENHANCED_GROUPS_HMI
+	-- Drawn after the children so it sits on top: a thin divider closing the
+	-- row, and the uptime right-aligned to the trailing edge. A filled row is
+	-- used for the divider rather than a box-drawing glyph so it renders the
+	-- same on every CraftOS font.
+	local c = default.colors
+	local span = math.max(0, self.width - layout.coordX + 1)
+	if span > 0 then
+		self:drawFilledBox(layout.coordX, layout.dividerRow, span, 1, c.divider)
 	end
-	for i=3,5 do
-		self:setCursorPos(28,i)
-		self:blit("|",colors.toBlit(colors.lightGray),colors.toBlit(self.backgroundColor))
+
+	local uptime = self.lblTime and self.lblTime:getText() or ""
+	if #uptime > 0 then
+		local ux = self.width - #uptime
+		if ux > layout.infoX then
+			self:drawText(ux, layout.headerRow, uptime, c.caption, self.backgroundColor)
+		end
 	end
 end
 
 function TaskGroupControl:initialize()
-	
-	self.frmId = Frame:new(string.sub(self.taskGroup.id,1,4),1,1,self.width,self.height,self.borderColor)
-	
+	-- LABENHANCED_GROUPS_HMI
+	-- Flat HMI row instead of a boxed card: a colored status strip on the left
+	-- edge, one header line, and two gray data plates. Objects added earlier
+	-- draw underneath, so every plate is registered before its labels.
+	local c = default.colors
 	local group = self.taskGroup
 	local area = group:getArea() or { start = {x=0,y=0,z=0}, finish = {x=0,y=0,z=0} }
-	-- row 1 - 16
-	self.lblXStart = Label:new("X  " .. area.start.x,3,3)
-	self.lblYStart = Label:new("Y  " .. area.start.y,3,4)
-	self.lblZStart = Label:new("Z  " .. area.start.z,3,5)
-	
-	self.lblXFinish = Label:new(area.finish.x,13,3)
-	self.lblYFinish = Label:new(area.finish.y,13,4)
-	self.lblZFinish = Label:new(area.finish.z,13,5)
-	
-	
-	-- row 17 - 27
-	self.btnMap = Button:new("map",21,3,6,1)
-	self.btnOptions = Button:new("opts", 21,4,6,1)
-	
-	--self.btnCancelTask = Button:new("cancel",21,5,6,1)
-	--self.btnDeleteGroup = Button:new("delete", 21,5,6,1)
-	self.btnDetails = Button:new("detail", 21,5,6,1)
-	
-	self.lblTask = Label:new(group.taskName,30,3)
-	self.lblProgress = Label:new("",30,5)
-	self.lblActiveTurtles = Label:new("0/".. group.groupSize,41,4)
-	self.lblStatus = Label:new(self.statusText,30,4,self.statusColor)
-	self.lblTime = Label:new("00:00.00", 41,5)
-	
-	self.btnMap.click = function() self:openMap() end
-	--self.btnCancelTask.click = function() self:cancelTask() end
-	--self.btnDeleteGroup.click = function() return self:deleteGroup() end
-	
-	self.btnOptions.click = function() return self:openOptions() end
-	self.btnDetails.click = function() return self:openDetails() end
 
-	self:addObject(self.frmId)
-	
+	-- left status strip, recolored per status in refresh()
+	self.boxStrip = Box:new(layout.stripX, layout.headerRow, layout.stripW,
+		layout.dataRows + 1, self.statusColor or c.neutral)
+	self.boxStrip:setBorderColor(self.statusColor or c.neutral)
+
+	-- plates behind the two data groups
+	self.boxCoords = Box:new(layout.coordX, layout.dataTop, layout.coordW,
+		layout.dataRows, c.plate)
+	self.boxInfo = Box:new(layout.infoX, layout.dataTop,
+		math.max(1, self.width - layout.infoX), layout.dataRows, c.plate)
+
+	self:addObject(self.boxStrip)
+	self:addObject(self.boxCoords)
+	self:addObject(self.boxInfo)
+
+	-- header line: id, status lamp + text, uptime
+	self.lblId = Label:new(string.sub(tostring(group.id),1,4), layout.coordX,
+		layout.headerRow, c.value)
+	self.boxLamp = Box:new(layout.axisX + 5, layout.headerRow, 1, 1,
+		self.statusColor or c.neutral)
+	self.boxLamp:setBorderColor(self.statusColor or c.neutral)
+	self.lblStatus = Label:new(statusText(group.status), layout.axisX + 7,
+		layout.headerRow, self.statusColor)
+	-- Holds the uptime text only; redraw() paints it right-aligned, so it is
+	-- deliberately not registered as a drawn child.
+	self.lblTime = Label:new("00:00.00", layout.infoX, layout.headerRow, c.caption)
+
+	self:addObject(self.lblId)
+	self:addObject(self.boxLamp)
+	self:addObject(self.lblStatus)
+
+	-- coordinate plate: axis caption, start and finish right-aligned so the
+	-- digits do not jump around as a group is edited
+	self.lblXAxis = Label:new("X", layout.axisX, layout.dataTop,   c.caption, c.plate)
+	self.lblYAxis = Label:new("Y", layout.axisX, layout.dataTop+1, c.caption, c.plate)
+	self.lblZAxis = Label:new("Z", layout.axisX, layout.dataTop+2, c.caption, c.plate)
+
+	self.lblXStart = Label:new(area.start.x, layout.axisX+2, layout.dataTop,   c.value, c.plate)
+	self.lblYStart = Label:new(area.start.y, layout.axisX+2, layout.dataTop+1, c.value, c.plate)
+	self.lblZStart = Label:new(area.start.z, layout.axisX+2, layout.dataTop+2, c.value, c.plate)
+
+	self.lblXFinish = Label:new(area.finish.x, layout.startEnd+1, layout.dataTop,   c.value, c.plate)
+	self.lblYFinish = Label:new(area.finish.y, layout.startEnd+1, layout.dataTop+1, c.value, c.plate)
+	self.lblZFinish = Label:new(area.finish.z, layout.startEnd+1, layout.dataTop+2, c.value, c.plate)
+
+	self:addObject(self.lblXAxis)
+	self:addObject(self.lblYAxis)
+	self:addObject(self.lblZAxis)
 	self:addObject(self.lblXStart)
 	self:addObject(self.lblYStart)
 	self:addObject(self.lblZStart)
 	self:addObject(self.lblXFinish)
 	self:addObject(self.lblYFinish)
 	self:addObject(self.lblZFinish)
+
+	-- key/value block on the right plate
+	local ix = layout.infoX + layout.infoPad
+	self.lblTaskCap = Label:new("TASK", ix, layout.dataTop,   c.caption, c.plate)
+	self.lblTurtCap = Label:new("TURT", ix, layout.dataTop+1, c.caption, c.plate)
+	self.lblProgCap = Label:new("PROG", ix, layout.dataTop+2, c.caption, c.plate)
+
+	self.lblTask = Label:new(group.taskName or "", ix+5, layout.dataTop, c.value, c.plate)
+	self.lblActiveTurtles = Label:new("0/".. tostring(group.groupSize), ix+5,
+		layout.dataTop+1, c.value, c.plate)
+	self.lblProgress = Label:new("", ix+5, layout.dataTop+2, c.value, c.plate)
+
+	self:addObject(self.lblTaskCap)
+	self:addObject(self.lblTurtCap)
+	self:addObject(self.lblProgCap)
 	self:addObject(self.lblTask)
-	self:addObject(self.lblTime)
-	self:addObject(self.lblStatus)
 	self:addObject(self.lblActiveTurtles)
 	self:addObject(self.lblProgress)
-	
+
+	-- controls, unchanged geometry
+	self.btnMap = Button:new("map", layout.btnX, layout.dataTop, layout.btnW, 1)
+	self.btnOptions = Button:new("opts", layout.btnX, layout.dataTop+1, layout.btnW, 1)
+	self.btnDetails = Button:new("detail", layout.btnX, layout.dataTop+2, layout.btnW, 1)
+
+	self.btnMap.click = function() self:openMap() end
+	self.btnOptions.click = function() return self:openOptions() end
+	self.btnDetails.click = function() return self:openDetails() end
+
 	self:addObject(self.btnMap)
-	--self:addObject(self.btnCancelTask)
 	self:addObject(self.btnOptions)
-	--self:addObject(self.btnDeleteGroup)
 	self:addObject(self.btnDetails)
-	--self.btnDeleteGroup.visible = false
 end
 
 function TaskGroupControl:refreshPos()
@@ -235,35 +328,50 @@ function TaskGroupControl:refreshPos()
 	local area = self.taskGroup:getArea() or { start = {x=0,y=0,z=0}, finish = {x=0,y=0,z=0} }
 	local start, finish = area.start, area.finish
 
-	self.lblXStart:setText("X  " .. start.x)
-	self.lblYStart:setText("Y  " .. start.y)
-	self.lblZStart:setText("Z  " .. start.z)
-	self.lblXFinish:setText(finish.x)
-	self.lblYFinish:setText(finish.y)
-	self.lblZFinish:setText(finish.z)
+	-- LABENHANCED_GROUPS_HMI
+	-- Right-align into fixed-width fields so the columns stay put.
+	local startW = layout.startEnd - (layout.axisX + 2) + 1
+	local finishW = layout.finishEnd - (layout.startEnd + 1) + 1
+
+	self.lblXStart:setText(padLeft(start.x, startW))
+	self.lblYStart:setText(padLeft(start.y, startW))
+	self.lblZStart:setText(padLeft(start.z, startW))
+	self.lblXFinish:setText(padLeft(finish.x, finishW))
+	self.lblYFinish:setText(padLeft(finish.y, finishW))
+	self.lblZFinish:setText(padLeft(finish.z, finishW))
 end
 
 function TaskGroupControl:refresh()
 	self:refreshPos()
-	
+
 	local group = self.taskGroup
 	self.lblTask:setText(group.taskName or "no task")
-	
+
 	local status = group:getStatus()
 	local activeCount = group:getActiveTurtles()
 	local active = group:isActive()
 
-	self.lblStatus:setText(status)
-	self.lblStatus:setTextColor(group:getStatusColor())
-	self.lblActiveTurtles:setText(activeCount.."/"..group.groupSize)
+	-- LABENHANCED_GROUPS_HMI
+	-- One status colour drives the strip, the lamp and the label, so the row
+	-- reads at a glance. Colours still come from group:getStatusColor().
+	local statusColor = group:getStatusColor()
+
+	self.lblStatus:setText(statusText(status))
+	self.lblStatus:setTextColor(statusColor)
+	if self.boxStrip then
+		self.boxStrip:setBackgroundColor(statusColor)
+		self.boxStrip:setBorderColor(statusColor)
+	end
+	if self.boxLamp then
+		self.boxLamp:setBackgroundColor(statusColor)
+		self.boxLamp:setBorderColor(statusColor)
+	end
+
+	self.lblId:setText(string.sub(tostring(group.id),1,4))
+	self.lblActiveTurtles:setText(activeCount.."/"..tostring(group.groupSize))
 	self.lblProgress:setText(group:getProgressText())
-	
+
 	self.lblTime:setText(group:getUptimeText())
-	
-	--self.btnCancelTask:setEnabled(active)
-	
-	--self.btnCancelTask.visible = active
-	--self.btnDeleteGroup.visible = not active
 end
 
 function TaskGroupControl:deleteGroup()
