@@ -83,7 +83,7 @@ function Navigator:requestRoute(goal)
 	return payload.path or {},payload.reason,payload.stats
 end
 
-function Navigator:requestNearestFrontier(origin,radius)
+function Navigator:requestNearestFrontier(origin,radius,bounds)
 	if self.miner.flushTunnelUpdatesSync then
 		self.miner:flushTunnelUpdatesSync()
 	end
@@ -91,6 +91,7 @@ function Navigator:requestNearestFrontier(origin,radius)
 		start=posTable(self.miner.pos),
 		origin=origin and posTable(origin) or nil,
 		radius=radius,
+		bounds=bounds, -- LABENHANCED_REMAP_AREA
 		claimTtl=120000, -- LABENHANCED_MULTI_MAPPER_CLAIMS
 	},4)
 	if not data then return nil,err end

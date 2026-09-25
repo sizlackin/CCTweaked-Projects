@@ -348,7 +348,7 @@ function Mapper:bypassDecoration(frontier,blockName)
 end
 
 
-function Mapper:mapNetwork(radius,maxCells)
+function Mapper:mapNetwork(radius,maxCells,bounds)
 	if not self.navigator then
 		error("TUNNEL MAPPER NAVIGATOR NOT INITIALIZED",0)
 	end
@@ -369,7 +369,14 @@ function Mapper:mapNetwork(radius,maxCells)
 	local currentTask = m:addCheckTask({"mapTunnelNetwork"})
 
 	print("SHARED TUNNEL NETWORK MAPPER")
-	print("radius:",radius,"max new cells:",maxCells)
+	if bounds then
+		-- LABENHANCED_REMAP_AREA
+		print("bounded to",bounds.minX..","..bounds.minY..","..bounds.minZ,
+			"->",bounds.maxX..","..bounds.maxY..","..bounds.maxZ)
+		print("max new cells:",maxCells)
+	else
+		print("radius:",radius,"max new cells:",maxCells)
+	end
 	print("NO BLOCKS WILL BE MINED")
 
 	-- LABENHANCED_MAPPER_FAST_TRAVEL
@@ -388,7 +395,7 @@ function Mapper:mapNetwork(radius,maxCells)
 
 		local frontier,reason,stats
 		for requestTry=1,8 do
-			frontier,reason,stats = nav:requestNearestFrontier(startPos,radius)
+			frontier,reason,stats = nav:requestNearestFrontier(startPos,radius,bounds)
 			if frontier or reason == "no_frontier"
 			or reason == "all_frontiers_claimed" then break end
 

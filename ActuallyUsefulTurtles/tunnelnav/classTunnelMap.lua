@@ -532,6 +532,30 @@ local function withinRadius(pos,origin,radius)
 	return dx*dx+dy*dy+dz*dz <= radius*radius
 end
 
+-- LABENHANCED_REMAP_AREA
+local function withinBounds(pos,b)
+	if not b then return true end
+	return pos.x >= b.minX and pos.x <= b.maxX
+		and pos.y >= b.minY and pos.y <= b.maxY
+		and pos.z >= b.minZ and pos.z <= b.maxZ
+end
+
+-- Where the search may WALK. Deliberately unrestricted in bounds mode: a turtle
+-- standing outside the box must still be able to route into it through tunnels
+-- that lie outside, otherwise a bounded remap of anywhere but your current room
+-- is unreachable. maxNodes still caps the expansion.
+local function withinTravelScope(pos,opts)
+	if opts.bounds then return true end
+	return withinRadius(pos,opts.origin,opts.radius)
+end
+
+-- Where a frontier may be MAPPED. This is the actual constraint: only cells
+-- inside the box count as work.
+local function withinWorkScope(pos,opts)
+	if opts.bounds then return withinBounds(pos,opts.bounds) end
+	return withinRadius(pos,opts.origin,opts.radius)
+end
+
 function TunnelMap:findNearestFrontier(startPos,opts)
 	opts = opts or {}
 	self:cleanupExpiredClaims()
@@ -576,12 +600,12 @@ function TunnelMap:findNearestFrontier(startPos,opts)
 				break
 			end
 
-			if withinRadius(pos,opts.origin,opts.radius) then
+			if withinTravelScope(pos,opts) then
 				for _,dir in ipairs(dirOrder) do
 					local conn = self:getConnection(node,dir)
 					if conn and conn.state == TunnelMap.STATE.UNMAPPED then
 						local target = TunnelMap.target(pos,dir)
-						if withinRadius(target,opts.origin,opts.radius) then
+						if withinWorkScope(target,opts) then
 							local fk = self:_frontierKey(pos,dir)
 							local claim = self.claims[fk]
 							if not claim or claim.owner == claimant then
@@ -632,7 +656,7 @@ function TunnelMap:findNearestFrontier(startPos,opts)
 
 			for _,n in ipairs(self:getOpenNeighbors(pos)) do
 				local nk = TunnelMap.key(n.pos)
-				if not closed[nk] and withinRadius(n.pos,opts.origin,opts.radius) then
+				if not closed[nk] and withinTravelScope(n.pos,opts) then
 					local nextCost = baseCost + 1
 						+ self:_intentNodePenalty(n.pos,claimant)
 						+ self:_nodeTrafficPenalty(n.pos)

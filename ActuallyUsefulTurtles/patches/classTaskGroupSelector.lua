@@ -874,7 +874,7 @@ function TaskGroupSelector:selectTask()
 		return true
 	end
 
-	local choices = {"mineArea", "excavateArea"}
+	local choices = {"mineArea", "excavateArea", "remapArea"}
 
 	-- The menu is added to self.parent, so it must be positioned in PARENT
 	-- coordinates. Using the field's local x/y only worked while this panel sat

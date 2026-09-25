@@ -4391,6 +4391,28 @@ function Miner:mapTunnelNetwork(radius,maxCells)
 	return self.tunnelMapper:mapNetwork(radius,maxCells)
 end
 
+function Miner:remapArea(start, finish)
+	-- LABENHANCED_REMAP_AREA
+	-- Non-destructive remap confined to a selected box. Takes the same
+	-- (start, finish) as mineArea/excavateArea, so it drops straight into the
+	-- task-group system: pick an area, pick remapArea, start.
+	--
+	-- Travel is unconstrained - the turtle fast-travels in over existing roads
+	-- like any other mapping run - but only cells inside the box are surveyed.
+	-- mapNetwork never mines, so nothing is broken on the way or on arrival.
+	local currentTask = self:addCheckTask({"remapArea"}, true)
+	local bounds = {
+		minX = math.min(start.x, finish.x), maxX = math.max(start.x, finish.x),
+		minY = math.min(start.y, finish.y), maxY = math.max(start.y, finish.y),
+		minZ = math.min(start.z, finish.z), maxZ = math.max(start.z, finish.z),
+	}
+	print("REMAP AREA", bounds.minX, bounds.minY, bounds.minZ,
+		"->", bounds.maxX, bounds.maxY, bounds.maxZ)
+	local returned, mapped, stats = self.tunnelMapper:mapNetwork(nil, nil, bounds)
+	self.taskList:remove(currentTask)
+	return returned, mapped, stats
+end
+
 function Miner:recoverTurtle(id, pos)
 	-- UNTESTED
 	-- navigate to a turtle at pos, mine, place, reboot

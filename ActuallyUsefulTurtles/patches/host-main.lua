@@ -453,6 +453,7 @@ node.onRequestAnswer = function(forMsg)
 			local frontier,reason,expanded = tunnelMap:findNearestFrontier(req.start,{
 				origin=req.origin,
 				radius=req.radius,
+				bounds=req.bounds, -- LABENHANCED_REMAP_AREA
 				maxNodes=40000,
 				claimant=sender, -- LABENHANCED_MULTI_MAPPER_CLAIMS
 				claimTtl=req.claimTtl or 120000,
