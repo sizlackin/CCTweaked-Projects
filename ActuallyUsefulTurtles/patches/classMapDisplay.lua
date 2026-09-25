@@ -356,7 +356,7 @@ function MapDisplay:drawChrome()
 	end
 	if p.titleRow then
 		self:drawFilledBox(p.x, p.titleRow, p.w, 1, plate)
-		self:drawText(p.x, p.titleRow, padCenter("LAYERS", p.w), default.valueColor, plate)
+		self:drawText(p.x, p.titleRow, padCenter("MAP OPTIONS", p.w), default.valueColor, plate)
 	end
 end
 
