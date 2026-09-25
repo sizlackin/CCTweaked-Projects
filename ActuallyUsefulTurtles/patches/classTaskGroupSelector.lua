@@ -357,7 +357,8 @@ function TaskGroupSelector:showModeControls()
 	local x = self.mapDisplay.btnLevelUp.x + self.mapDisplay.btnLevelUp.width + 1
 	local width = 9
 
-	self.btnSelectionMode = CheckBox:new(x, 1, "select", not self.cursorMode, width, 1, colors.gray)
+	-- Vertically center the two-row mode control beside the 3-row yellow level button.
+	self.btnSelectionMode = CheckBox:new(x, 2, "select", not self.cursorMode, width, 1, colors.gray)
 	self.btnSelectionMode.accentColor = colors.green
 	self.btnSelectionMode.redraw = drawModeToggle
 	self.btnSelectionMode.handleClick = function() self.btnSelectionMode.click() end
@@ -366,7 +367,7 @@ function TaskGroupSelector:showModeControls()
 		return true
 	end
 
-	self.btnCursorMode = CheckBox:new(x, 2, "cursor", self.cursorMode, width, 1, colors.gray)
+	self.btnCursorMode = CheckBox:new(x, 3, "cursor", self.cursorMode, width, 1, colors.gray)
 	self.btnCursorMode.accentColor = colors.cyan
 	self.btnCursorMode.redraw = drawModeToggle
 	self.btnCursorMode.handleClick = function() self.btnCursorMode.click() end
