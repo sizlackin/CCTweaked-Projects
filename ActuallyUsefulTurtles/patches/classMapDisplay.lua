@@ -345,7 +345,7 @@ function MapDisplay:drawChrome()
 	local zoom = chrome.zoom
 	self:drawFilledBox(zoom.x, zoom.y, zoom.w, zoom.h, plate)
 
-	-- cc-mek-scada thin frame: a 1-subpixel ring drawn with teletext glyphs.
+	-- cc-mek-scada thin frame: original 1-subpixel ring.
 	local p = chrome.layers
 	local inner = p.w - 2
 	self:drawFilledBox(p.x, p.y, p.w, p.h, panel)
@@ -358,7 +358,7 @@ function MapDisplay:drawChrome()
 	end
 	self:drawText(p.x, p.y + p.h - 1, "\138" .. string.rep("\143", inner) .. "\133", panel, plate)
 	if p.titleRow then
-		self:drawText(p.x, p.titleRow, padCenter("LAYERS", p.w), default.valueColor, plate)
+		self:drawText(p.x, p.titleRow, padCenter("MAP OPTIONS", p.w), default.valueColor, plate)
 	end
 end
 
@@ -942,7 +942,9 @@ function MapDisplay:redraw() -- super override
 		-- draw called multiple times: hostdisplay, turtledetails (redraw + checkupdates)
 		-- print("map", "redraw ct", ct, "time", os.epoch("utc") - start)
 		
+		self:redrawSelectionOutline()
 		self:redrawOverlay()
+		self:redrawSelectionAnchors()
 		if not self.hiddenControls then self:drawChrome() end
 		-- redraw map elements
 		local node = self.objects.last
@@ -999,6 +1001,7 @@ function MapDisplay:setGroupArea(group)
 		finish=finish,
 		color=group.getStatusColor and group:getStatusColor() or colors.green,
 		groupId=group.id,
+		preciseOutline=true, -- LABENHANCED_PRECISE_TASK_OUTLINE
 	})
 	self.fullRedraw = true
 	return true
@@ -1033,9 +1036,14 @@ function MapDisplay:drawAreas()
 			end
 		end
 
+		-- Draw normal area outlines in the subpixel map. Selection anchors are
+		-- intentionally skipped here and rendered later as character overlays.
+		-- That avoids PixelDrawer's two-colors-per-2x3-cell quantization while
+		-- keeping the red outline at the exact selected world coordinate.
 		for _,area in ipairs(areas) do
 			local start, finish, color = area.start, area.finish, area.color
-			if start and finish then
+			if start and finish and not area.selectionAnchor
+			and not area.selectionOutline and not area.preciseOutline then
 				local sx, sz = self:transformSubPos(start)
 				local ex, ez = self:transformSubPos(finish)
 				self.drawer:drawBox(sx, sz, ex-sx+1, ez-sz+1, blitTab[color], 1)
@@ -1090,6 +1098,109 @@ function MapDisplay:drawChunkCircle()
 		self.drawer:drawCircle(centerX, centerZ, radius, colors.toBlit(colors.orange))
 		local radius = 16*16 / self.zoomLevel
 		self.drawer:drawCircle(centerX, centerZ, radius, colors.toBlit(colors.red))
+	end
+end
+
+function MapDisplay:redrawSelectionOutline()
+	-- LABENHANCED_PRECISE_SELECTION_OUTLINE
+	-- Selection borders used to be drawn into PixelDrawer together with terrain.
+	-- A 2x3 terminal cell can only contain two colors, so a one-pixel red border
+	-- could be quantized away whenever a tunnel introduced extra colors.
+	--
+	-- Composite live selection AND active-task borders after the terrain frame.
+	-- Each touched terminal cell keeps one dominant terrain color plus the
+	-- outline color, so tunnel/floor colors cannot quantize the border away.
+	if not self.areas or not self.drawer or not PixelDrawer.pixelsToChar then return end
+
+	local frame = self.drawer.frame
+	local fw,fh = self.drawer.width,self.drawer.height
+	local function addPixel(cells,px,py)
+		if px < 1 or px > fw or py < 1 or py > fh then return end
+		local cx = math.floor((px-1)/2)+1
+		local cy = math.floor((py-1)/3)+1
+		local key = cy..":"..cx
+		local cell = cells[key]
+		if not cell then
+			cell = {x=cx,y=cy,mask={}}
+			cells[key] = cell
+		end
+		local lx = (px-1)%2
+		local ly = (py-1)%3
+		local idx = ly*2 + lx + 1
+		cell.mask[idx] = true
+	end
+
+	for _,area in ipairs(self.areas) do
+		if (area.selectionOutline or area.preciseOutline)
+		and area.start and area.finish then
+			local sx,sy = self:transformSubPos(area.start)
+			local ex,ey = self:transformSubPos(area.finish)
+			if sx > ex then sx,ex = ex,sx end
+			if sy > ey then sy,ey = ey,sy end
+
+			local cells = {}
+			for x=sx,ex do
+				addPixel(cells,x,sy)
+				addPixel(cells,x,ey)
+			end
+			for y=sy,ey do
+				addPixel(cells,sx,y)
+				addPixel(cells,ex,y)
+			end
+
+			for _,cell in pairs(cells) do
+				local px0 = (cell.x-1)*2 + 1
+				local py0 = (cell.y-1)*3 + 1
+				local under = {
+					frame[py0] and frame[py0][px0] or blitTab[self.backgroundColor],
+					frame[py0] and frame[py0][px0+1] or blitTab[self.backgroundColor],
+					frame[py0+1] and frame[py0+1][px0] or blitTab[self.backgroundColor],
+					frame[py0+1] and frame[py0+1][px0+1] or blitTab[self.backgroundColor],
+					frame[py0+2] and frame[py0+2][px0] or blitTab[self.backgroundColor],
+					frame[py0+2] and frame[py0+2][px0+1] or blitTab[self.backgroundColor],
+				}
+
+				-- Pick the most common NON-selection terrain color in this cell.
+				-- The resulting character uses exactly {terrain, red}, so red
+				-- can never be discarded by color quantization.
+				local outlineColor = blitTab[area.color or colors.red]
+				local counts,bg,best = {},blitTab[self.backgroundColor],-1
+				for i=1,6 do
+					if not cell.mask[i] then
+						local col = under[i]
+						counts[col] = (counts[col] or 0) + 1
+						if counts[col] > best then bg,best = col,counts[col] end
+					end
+				end
+
+				local p = {}
+				for i=1,6 do p[i] = cell.mask[i] and outlineColor or bg end
+				local txt,fg,bgc = PixelDrawer.pixelsToChar(
+					p[1],p[2],p[3],p[4],p[5],p[6]
+				)
+				self:setCursorPos(cell.x,cell.y)
+				self:blit(txt,fg,bgc)
+			end
+		end
+	end
+end
+
+function MapDisplay:redrawSelectionAnchors()
+	-- Render WorldEdit pos1/pos2 after the subpixel frame has been blitted.
+	-- A terminal glyph can carry its own foreground color, so the marker cannot
+	-- disappear when terrain/red-outline colors share the same 2x3 pixel cell.
+	-- The red outline underneath remains the precise block-level reference.
+	if not self.areas then return end
+	for _,area in ipairs(self.areas) do
+		if area.selectionAnchor and area.start and area.color
+		and self:isWithin(area.start.x, nil, area.start.z) then
+			local x,y = self:transformPos(area.start)
+			if x >= 1 and x <= self.width and y >= 1 and y <= self.height then
+				self:setCursorPos(x,y)
+				-- CP437 254 is the small filled square used by CC terminals.
+				self:blit("\254", blitTab[area.color], blitTab[self.backgroundColor])
+			end
+		end
 	end
 end
 

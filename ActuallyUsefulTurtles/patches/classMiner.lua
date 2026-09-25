@@ -119,6 +119,15 @@ local function isTurtleBlockId(id)
 		or id == "computercraft:turtle"
 end
 
+-- LABENHANCED_AUTO_TORCHES
+-- One stack maximum per miner. Vanilla torches emit block light 14; with the
+-- torch one block sideways and one block above the turtle floor, placing every
+-- 11 forward blocks keeps the floor at block-light >= 1. The next block would
+-- otherwise be spawnable (block light 0 in modern vanilla).
+local tunnelTorchItem = "minecraft:torch"
+local tunnelTorchMax = 64
+local tunnelTorchSpacing = 11
+
 local disallowedBlocks = {
 ["minecraft:chest"] = true,
 ["minecraft:hopper"]=true,
@@ -790,6 +799,7 @@ function Miner:transferItems()
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local hasFuel = false
 	local hasTunnelMaterial = false
+	local keptTorches = 0 -- LABENHANCED_AUTO_TORCHES: never keep more than 64
 	local hasInventory = false
 	local startOrientation = self.orientation
 	
@@ -814,6 +824,18 @@ function Miner:transferItems()
 			if data and data.name then
 				if not hasFuel and fuelItems[data.name] then
 					hasFuel = true --keep the fuel
+				elseif data.name == tunnelTorchItem then
+					local keep = math.min(data.count,math.max(tunnelTorchMax-keptTorches,0))
+					keptTorches = keptTorches + keep
+					if keep < data.count then
+						self:select(slot)
+						local excess = data.count - keep
+						local ok = turtle.drop(excess)
+						if ok ~= true then
+							print(ok,"inventory in front is full")
+							break
+						end
+					end
 				elseif data.name == veinBackfillItem and (self.veinTrace or not hasTunnelMaterial) then
 					-- Always keep one stack for tunnel/lava maintenance. During a
 					-- vein excursion keep all cobbled deepslate until cleanup is done.
@@ -842,7 +864,8 @@ function Miner:dumpBadItems(dropAll)
 	for i = 0,default.inventorySize-1 do
 		local slot = (i+startSlot-1)%default.inventorySize +1
 		local data = turtle.getItemDetail(slot)
-		if data and (mineBlocks[data.name] or ( dropAll and not fuelItems[data.name])) then
+		if data and data.name ~= tunnelTorchItem
+		and (mineBlocks[data.name] or ( dropAll and not fuelItems[data.name])) then
 			if data.name == veinBackfillItem and (self.veinTrace or not hasTunnelMaterial) then
 				-- Always reserve one stack for tunnel maintenance. Preserve all
 				-- cobbled deepslate while closing an active vein excursion.
@@ -1308,6 +1331,11 @@ end
 
 function Miner:recordTunnelTraversal(fromPos,toPos)
 	if not fromPos or not toPos then return end
+	-- LABENHANCED_NO_ROUTE_RESCAN
+	-- A controller-issued tunnel route is already authoritative. Traversing it
+	-- should not re-report every known OPEN edge as though it were being mapped
+	-- again. Newly dug/bootstrap/yield movement still records normally.
+	if self.traversingKnownTunnelRoute then return end
 	local dir = TunnelMap.directionBetween(fromPos,toPos)
 	if dir then
 		self:queueTunnelUpdate(fromPos,dir,TunnelMap.STATE.OPEN)
@@ -1568,7 +1596,8 @@ function Miner:dig(side)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	self:updateLookingAt()
 	local target = vector.new(self.lookingAt.x,self.lookingAt.y,self.lookingAt.z)
-	if self.activeMiningBounds and not self:isInsideActiveMiningBounds(target) then
+	if self.activeMiningBounds and not self:isInsideActiveMiningBounds(target)
+	and not self.allowTorchNicheDig then
 		print("MINING BOUNDARY - REFUSING TO DIG OUTSIDE JOB")
 		return false
 	end
@@ -1791,8 +1820,10 @@ function Miner:digMove(safe)
 	-- while not mining any turtles
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local ct = 0
-	local result = true	
-	
+	local result = true
+	local failureReason = nil
+	local trafficWaits = 0
+
 	-- all changes here should be made in Down and Up as well
 	
 	-- optimization: if it is known that a block is in front -> dig first, then move
@@ -1834,14 +1865,15 @@ function Miner:digMove(safe)
 				sleep(0.25)
 				--print("digMove", checkSafe(blockName), blockName)
 			elseif isTurtleBlockId(blockName) then
-				-- LABENHANCED_MINING_ROUTE_BRIDGE
-				-- Never mine the teammate. Give short-lived traffic time to
-				-- clear before declaring the connector impossible.
-				print("TURTLE TRAFFIC IN MINE ACCESS - WAITING")
-				sleep(0.75)
-				ct = ct + 8
-				if ct > 96 then
-					print("TURTLE TRAFFIC DID NOT CLEAR")
+				-- LABENHANCED_COOP_MINING_TRAFFIC
+				-- Never mine a teammate. Briefly yield here, then hand control
+				-- back to tunnel() so it can use an open no-dig passing space
+				-- instead of sitting in the same lane indefinitely.
+				trafficWaits = trafficWaits + 1
+				print("TURTLE TRAFFIC AHEAD - YIELD",trafficWaits.."/6")
+				sleep(0.5)
+				if trafficWaits >= 6 then
+					failureReason = "traffic"
 					result = false
 					break
 				end
@@ -1867,7 +1899,7 @@ function Miner:digMove(safe)
 
 	self.taskList:remove(currentTask)
 
-	return ( result and ( blockName or true ) ) or false, data
+	return ( result and ( blockName or true ) ) or false, data, failureReason
 end
 
 function Miner:digMoveDown(safe)
@@ -2207,13 +2239,69 @@ function Miner:navigateKnownAirBootstrap(x,y,z)
 end
 
 
+-- LABENHANCED_COOP_MINING_TRAFFIC
+-- Use the already-dug upper half of a 1x2 tunnel as a temporary passing bay.
+-- This NEVER digs a block. It gives head-on traffic a way to pass in a
+-- one-wide floor lane before the navigator considers the route jammed.
+function Miner:yieldForTurtleTraffic(waitSeconds)
+	waitSeconds = tonumber(waitSeconds) or 4
+	local hasUp = turtle.inspectUp()
+	if hasUp then
+		return false,"no_headspace"
+	end
+
+	local originalY = self.pos.y
+	if not self:up() then
+		return false,"headspace_move_failed"
+	end
+
+	print("TRAFFIC YIELD - USING OPEN HEADSPACE")
+	local deadline = os.epoch("utc") + math.floor(waitSeconds * 1000)
+	sleep(0.5)
+
+	while os.epoch("utc") < deadline do
+		local hasDown,data = turtle.inspectDown()
+		if not hasDown then
+			if self:down() then
+				return self.pos.y == originalY,"headspace"
+			end
+		elseif not isTurtleBlockId(data and data.name) then
+			break
+		end
+		sleep(0.5)
+	end
+
+	-- A teammate may still be directly underneath us. Stay out of its way a
+	-- little longer rather than forcing a block break or descending onto it.
+	for _=1,8 do
+		local hasDown,data = turtle.inspectDown()
+		if not hasDown and self:down() then
+			return self.pos.y == originalY,"headspace"
+		end
+		if hasDown and not isTurtleBlockId(data and data.name) then
+			break
+		end
+		sleep(0.5)
+	end
+
+	print("TRAFFIC YIELD COULD NOT REJOIN FLOOR")
+	return false,"yield_rejoin_blocked"
+end
+
 function Miner:navigateOpenPathToPos(x,y,z)
 	local goal = vector.new(x,y,z)
+	self.lastNavigationFailureReason = nil
 	if self.pos == goal then return true end
 
 	if self.tunnelNavigator then
 		local ok,reason,stats = self.tunnelNavigator:navigateTo(goal)
 		if ok then return true end
+		self.lastNavigationFailureReason = reason
+
+		if reason == "traffic_jam_timeout" then
+			print("TURTLE TRAFFIC JAM TIMEOUT - REFUSING TO PUSH THROUGH")
+			return false
+		end
 
 		-- LABENHANCED_MINING_ROUTE_BRIDGE
 		-- The logical road graph can legitimately lag behind the older physical
@@ -2235,7 +2323,9 @@ function Miner:navigateOpenPathToPos(x,y,z)
 		return false
 	end
 
-	return self:navigateKnownAirBootstrap(x,y,z)
+	local ok = self:navigateKnownAirBootstrap(x,y,z)
+	if not ok then self.lastNavigationFailureReason = "no_open_route" end
+	return ok
 end
 
 -- LABENHANCED_CONTAINED_MINING
@@ -2357,15 +2447,13 @@ function Miner:mineVein()
 	self.taskList:remove(currentTask)
 end
 
-function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect)
+function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps, rowTurnDirection)
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name}, true)
 	print("stripmining", "rows", rows, "levels", levels)
 
-	local directionFactor = 1 -- -1 for right hand mining
-
 	local taskState = currentTask.taskState
 	if taskState then
-		rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect = tableunpack(taskState.args,1,taskState.args.n)
+		rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps, rowTurnDirection = tableunpack(taskState.args,1,taskState.args.n)
 	else
 		taskState = {
 			stage = 1,
@@ -2374,11 +2462,13 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 				currentRow = 1,
 				currentLevel = 1,
 				rowOrientation = self.orientation,
-				tunnelDirection = -1 * directionFactor,
+				tunnelDirection = rowTurnDirection or -1,
+				baseTunnelDirection = rowTurnDirection or -1,
 				startPos = vector.new(self.pos.x, self.pos.y, self.pos.z),
 				startOrientation = self.orientation,
+				torchSide = -1, -- fixed left wall
 			},
-			args = tablepack(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect),
+			args = tablepack(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps, rowTurnDirection),
 		}
 	end
 	local vars = taskState.vars
@@ -2453,19 +2543,50 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 				vars.currentLevel = currentLevel
 				self.checkPointer:save(self)
 
-				if currentLevel%2 == 0 and rows%2 == 0 then 
-					vars.tunnelDirection = 1 * directionFactor
-				else vars.tunnelDirection = -1 * directionFactor end
+				local baseTurn = vars.baseTunnelDirection or rowTurnDirection or -1
+				if currentLevel%2 == 0 and rows%2 == 0 then
+					vars.tunnelDirection = -baseTurn
+				else
+					vars.tunnelDirection = baseTurn
+				end
 				
 				for currentRow = vars.currentRow, rows do
 					vars.currentRow = currentRow
 					self.checkPointer:save(self) -- perhaps at start of for-loop
 					
 
+					-- LABENHANCED_AUTO_TORCHES
+					-- Only the long mining row receives torches. Short connector
+					-- moves between rows do not, keeping the layout clean.
+					if self.activeMiningBounds and not noInspect then
+						self.autoTunnelTorches = true
+						self.tunnelTorchSteps = 0
+						self.tunnelTorchSide = -1
+
+						-- Seed each row with a light at the entrance, then place the
+						-- next one just before vanilla block light would reach 0.
+						-- Every torch goes on the LEFT wall relative to travel.
+						self:placeTunnelTorchNiche(-1)
+						vars.torchSide = -1
+					end
+
 					self:tunnelStraight(rowLength, noInspect)
+
+					if self.autoTunnelTorches then
+						vars.torchSide = -1
+						self.autoTunnelTorches = false
+						self.tunnelTorchSteps = 0
+						self.checkPointer:save(self)
+					end
+
 					if currentRow < rows then
 						self:turnTo(vars.rowOrientation + vars.tunnelDirection)
-						self:tunnelStraight(rowFactor, noInspect)
+						-- LABENHANCED_EFFICIENT_STRIP_ROWS
+						-- Normally 3 blocks. The last connector can be 2 blocks
+						-- when needed to cover the far edge without crossing this
+						-- turtle's assigned stripe boundary.
+						local connectorLength = (rowSteps and rowSteps[currentRow]) or rowFactor
+						self:tunnelStraight(connectorLength, noInspect)
 						if currentRow%2 == 1 then
 							self:turnTo(vars.rowOrientation-2)
 						else
@@ -2533,6 +2654,8 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 --------------------
 
 	if taskState.stage == 2 then
+		self.autoTunnelTorches = false
+		self.tunnelTorchSteps = 0
 		-- Return through the tunnel network only. Never carve a 1x1 shortcut
 		-- back to the strip-mine entrance.
 		if not self:navigateOpenPathToPos(vars.startPos.x, vars.startPos.y, vars.startPos.z) then
@@ -2969,6 +3092,93 @@ function Miner:reachSharedMineEntrance(sharedEntry, sharedEnd, accessEntry, isLe
 	end
 end
 
+-- LABENHANCED_FAR_EDGE_SPINE
+-- Close the "open comb" at the far end of a mining stripe. stripMine already
+-- creates parallel rows and short 3-block turns; this adds one continuous 1x2
+-- spine along the opposite edge so every row endpoint is tied into the same
+-- tunnel network. It stays inside this turtle's assigned stripe.
+function Miner:connectMiningFarEdge(startPos,finishPos,orientation)
+	if not startPos or not finishPos or orientation == nil then return false end
+
+	local y = startPos.y
+	local edgeStart,edgeEnd
+
+	if orientation % 2 == 0 then
+		-- Mining rows run north/south (Z). Join them across X at the far Z edge.
+		edgeStart = vector.new(startPos.x,y,finishPos.z)
+		edgeEnd = vector.new(finishPos.x,y,finishPos.z)
+	else
+		-- Mining rows run east/west (X). Join them across Z at the far X edge.
+		edgeStart = vector.new(finishPos.x,y,startPos.z)
+		edgeEnd = vector.new(finishPos.x,y,finishPos.z)
+	end
+
+	if sameAccessPos(edgeStart,edgeEnd) then return true end
+
+	-- The first point is the end of the first mining row, so it should already
+	-- be open. Travel there through known tunnels only; never cut a shortcut.
+	local reached = self:navigateOpenPathToPos(edgeStart.x,edgeStart.y,edgeStart.z)
+	if not reached then
+		print("FAR EDGE SPINE: NO OPEN ROUTE TO START - SKIPPING")
+		return false
+	end
+
+	print("CONNECTING FAR EDGE TUNNEL SPINE")
+	local ok = self:digNeatAccessTunnelTo(edgeEnd)
+	if ok and self.flushTunnelUpdatesSync then
+		self:flushTunnelUpdatesSync()
+	end
+	return ok
+end
+
+-- LABENHANCED_EFFICIENT_STRIP_ROWS
+-- Build the densest useful branch-mine row pattern without overlapping scans.
+-- Straight rows stay at most 3 blocks apart, because each 1x2 tunnel inspects
+-- one block into both side walls. If the far edge would otherwise sit two
+-- blocks beyond the last row, use a final 2-block connector instead of trying
+-- to step 3 blocks outside the assigned stripe.
+local function buildEfficientStripRowSteps(shortSpan,rowFactor)
+	rowFactor = rowFactor or 3
+	shortSpan = math.max(0,math.floor(shortSpan or 0))
+	local steps = {}
+	local travelled = 0
+
+	while shortSpan - travelled > 1 do
+		local remaining = shortSpan - travelled
+		local step
+		if remaining == 2 then
+			step = 2
+		else
+			step = math.min(rowFactor,remaining)
+		end
+		steps[#steps+1] = step
+		travelled = travelled + step
+	end
+
+	return #steps + 1, steps
+end
+
+local function getStripRowTurnDirection(orientation,startPos,finishPos)
+	-- LABENHANCED_GLOBAL_STRIP_GRID
+	-- stripMine's +/-1 turn must point INTO the assigned stripe. The old hard-
+	-- coded left turn only worked from half of the possible starting corners.
+	local desiredX,desiredZ = 0,0
+	if orientation % 2 == 0 then
+		local dx = finishPos.x-startPos.x
+		desiredX = (dx > 0 and 1) or (dx < 0 and -1) or 0
+	else
+		local dz = finishPos.z-startPos.z
+		desiredZ = (dz > 0 and 1) or (dz < 0 and -1) or 0
+	end
+
+	local left = vectors[(orientation-1)%4]
+	if (desiredX ~= 0 and left.x == desiredX)
+	or (desiredZ ~= 0 and left.z == desiredZ) then
+		return -1
+	end
+	return 1
+end
+
 function Miner:mineArea(start, finish) 
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name}, true)
 	-- mine area within start and finish pos
@@ -2996,6 +3206,15 @@ function Miner:mineArea(start, finish)
 	
 	if taskState.stage == 1 then
 
+		-- Keep the controller-assigned stripe bounds intact. Shared mining uses
+		-- these later so each turtle can start directly on its shared-spine corner
+		-- instead of carving a private connector to a recomputed nearest corner.
+		local assignedBounds = {
+			minX=math.min(start.x,finish.x), maxX=math.max(start.x,finish.x),
+			minY=math.min(start.y,finish.y), maxY=math.max(start.y,finish.y),
+			minZ=math.min(start.z,finish.z), maxZ=math.max(start.z,finish.z),
+		}
+
 		local orientation
 		start, finish, orientation = self:getAreaStart(start, finish)
 		
@@ -3016,13 +3235,13 @@ function Miner:mineArea(start, finish)
 		
 		local rowFactor = 3
 		local levelFactor = 2
-		local rowLength, rows, levels
+		local rowLength, rows, levels, rowSteps
 		if orientation%2 == 0 then
 			rowLength = depth
-			rows = (width+rowFactor)/rowFactor
+			rows,rowSteps = buildEfficientStripRowSteps(width,rowFactor)
 		else
 			rowLength = width
-			rows = (depth+rowFactor)/rowFactor
+			rows,rowSteps = buildEfficientStripRowSteps(depth,rowFactor)
 		end
 		if diff.y < 0 then
 			levels = math.floor(((-height-levelFactor)/levelFactor)+0.5)
@@ -3030,7 +3249,6 @@ function Miner:mineArea(start, finish)
 			levels = math.floor(((height+levelFactor)/levelFactor)+0.5)
 		end
 		
-		rows = math.floor(rows+0.5)
 		--self.map:load()
 		
 		print("start", start,"end",finish, "diff", diff, "levels", levels)
@@ -3041,6 +3259,10 @@ function Miner:mineArea(start, finish)
 		local sharedEnd = assignmentVars.sharedAccessEnd
 		local accessEntry = assignmentVars.accessEntry
 		local accessLeader = assignmentVars.accessLeader
+		local stripAxis = assignmentVars.stripAxis
+		local stripLaneStart = assignmentVars.stripLaneStart
+		local stripLaneFinish = assignmentVars.stripLaneFinish
+		local stripLaneCount = assignmentVars.stripLaneCount
 
 		local reachedArea = false
 		if sharedEntry then
@@ -3054,15 +3276,78 @@ function Miner:mineArea(start, finish)
 				reachedArea = self:navigateOpenPathToPos((accessEntry or sharedEntry).x,(accessEntry or sharedEntry).y,(accessEntry or sharedEntry).z)
 			end
 
-			-- Once at the paired entrance, getAreaStart will naturally choose
-			-- the nearest corner of this turtle's assigned stripe. If the exact
-			-- stripe start is not open yet, create only the small in-box 1x2
-			-- connection from the shared entrance.
+			-- LABENHANCED_GLOBAL_STRIP_GRID
+			-- accessEntry now lands on this turtle's first lane of ONE global
+			-- 3-block strip grid. It may sit one block inside the stripe boundary,
+			-- but it is still on the shared access spine -- no private connector.
 			if reachedArea then
-				start, finish, orientation = self:getAreaStart(start,finish)
-				if not sameAccessPos(self.pos,start) then
-					if not self:navigateOpenPathToPos(start.x,start.y,start.z) then
-						reachedArea = self:digNeatAccessTunnelTo(start)
+				local entry = accessEntry or sharedEntry
+				local b = assignedBounds
+
+				if stripAxis and stripLaneStart ~= nil and stripLaneFinish ~= nil then
+					local valid = false
+					if stripAxis == "x" then
+						valid = entry
+							and (entry.z == b.minZ or entry.z == b.maxZ)
+							and entry.x >= b.minX and entry.x <= b.maxX
+						if valid then
+							start = vector.new(stripLaneStart,b.minY,entry.z)
+							finish = vector.new(
+								stripLaneFinish,
+								b.maxY,
+								(entry.z == b.minZ) and b.maxZ or b.minZ
+							)
+						end
+					elseif stripAxis == "z" then
+						valid = entry
+							and (entry.x == b.minX or entry.x == b.maxX)
+							and entry.z >= b.minZ and entry.z <= b.maxZ
+						if valid then
+							start = vector.new(entry.x,b.minY,stripLaneStart)
+							finish = vector.new(
+								(entry.x == b.minX) and b.maxX or b.minX,
+								b.maxY,
+								stripLaneFinish
+							)
+						end
+					end
+
+					if not valid then
+						print("INVALID GLOBAL STRIP ENTRY - REFUSING PRIVATE CONNECTOR")
+						reachedArea = false
+					end
+				else
+					-- Compatibility for task groups created before the global-grid
+					-- update: keep the corner-only rule, never drill a shortcut.
+					local onXEdge = entry and (entry.x == b.minX or entry.x == b.maxX)
+					local onZEdge = entry and (entry.z == b.minZ or entry.z == b.maxZ)
+					if not entry or not onXEdge or not onZEdge then
+						print("SHARED ENTRY IS NOT A STRIPE CORNER - REFUSING PRIVATE CONNECTOR")
+						reachedArea = false
+					else
+						start = vector.new(entry.x,b.minY,entry.z)
+						finish = vector.new(
+							(entry.x == b.minX) and b.maxX or b.minX,
+							b.maxY,
+							(entry.z == b.minZ) and b.maxZ or b.minZ
+						)
+					end
+				end
+
+				if reachedArea then
+					local stripeDx = finish.x - start.x
+					local stripeDz = finish.z - start.z
+					if math.abs(stripeDx) >= math.abs(stripeDz) then
+						orientation = (stripeDx >= 0) and 3 or 1
+					else
+						orientation = (stripeDz >= 0) and 0 or 2
+					end
+
+					if not sameAccessPos(self.pos,start) then
+						reachedArea = self:navigateOpenPathToPos(start.x,start.y,start.z)
+						if not reachedArea then
+							print("NO OPEN SHARED ROUTE TO STRIPE START - NOT DIGGING A SHORTCUT")
+						end
 					end
 				end
 			end
@@ -3081,15 +3366,69 @@ function Miner:mineArea(start, finish)
 			self:returnHome()
 			self:error("UNABLE TO GET TO AREA") -- resumable
 		else
+			-- The shared-spine corner may deliberately differ from the nearest
+			-- corner chosen before travel. Recompute ALL mining geometry from
+			-- the final start/finish so row direction and vertical direction
+			-- cannot inherit stale values from the pre-access position.
+			diff = finish - start
+			width = math.abs(diff.x)
+			height = math.abs(diff.y)
+			depth = math.abs(diff.z)
+
+			if width >= depth then
+				orientation = (diff.x >= 0) and 3 or 1
+			else
+				orientation = (diff.z >= 0) and 0 or 2
+			end
+
+			if orientation%2 == 0 then
+				rowLength = depth
+				rows,rowSteps = buildEfficientStripRowSteps(width,rowFactor)
+			else
+				rowLength = width
+				rows,rowSteps = buildEfficientStripRowSteps(depth,rowFactor)
+			end
+
+			-- New coordinated groups already supply exact 3-spaced lane count.
+			-- Do not let a per-stripe helper invent a 2-block final lane.
+			if stripLaneCount and stripLaneCount >= 1 then
+				rows = stripLaneCount
+				rowSteps = {}
+				for i=1,rows-1 do rowSteps[i] = 3 end
+			end
+			if diff.y < 0 then
+				levels = math.floor(((-height-levelFactor)/levelFactor)+0.5)
+			else
+				levels = math.floor(((height+levelFactor)/levelFactor)+0.5)
+			end
 			self:turnTo(orientation)
-			self:setActiveMiningBounds(start,finish)
+			if sharedEntry then
+				self:setActiveMiningBounds(
+					vector.new(assignedBounds.minX,assignedBounds.minY,assignedBounds.minZ),
+					vector.new(assignedBounds.maxX,assignedBounds.maxY,assignedBounds.maxZ)
+				)
+			else
+				self:setActiveMiningBounds(start,finish)
+			end
+			local rowTurnDirection = getStripRowTurnDirection(orientation,start,finish)
 
 			self:updateProgress("stage", 0.05)
 			taskState.stage = 2
 			taskState.ignorePosition = true
 			self.checkPointer:save(self)
 
-			self:stripMine(rowLength, rows, levels)
+			self:stripMine(rowLength, rows, levels, rowFactor, levelFactor, nil, nil, rowSteps, rowTurnDirection)
+
+			-- LABENHANCED_FAR_EDGE_SPINE
+			-- Turn the striped "comb" into one connected tunnel network at the
+			-- far end as well. Each turtle only connects the far edge of its own
+			-- assigned stripe; adjacent stripes meet naturally into one spine.
+			if levels == 1 or levels == -1 then
+				self:connectMiningFarEdge(start,finish,orientation)
+			else
+				print("FAR EDGE SPINE: MULTI-LEVEL JOB - CONNECTING BASE LEVEL ONLY")
+				self:connectMiningFarEdge(start,finish,orientation)
+			end
 			
 		end
 	end
@@ -3449,6 +3788,119 @@ end
 -- block: once for exposed ores and again for lava. That doubled rotations,
 -- inspections and up/down movement. This pass handles BOTH in one physical
 -- shell scan while preserving the same fair-mining and lava behavior.
+-- LABENHANCED_AUTO_TORCHES
+function Miner:countTunnelTorches()
+	local count = 0
+	for slot=1,default.inventorySize do
+		local data = turtle.getItemDetail(slot)
+		if data and data.name == tunnelTorchItem then
+			count = count + data.count
+		end
+	end
+	return count
+end
+
+function Miner:placeTunnelTorchNiche(side)
+	-- Put a standing torch in a one-block recess beside the UPPER half of the
+	-- 1x2 tunnel. The lower travel lane remains completely unobstructed.
+	local slot = self:findInventoryItem(tunnelTorchItem)
+	if not slot then
+		if not self.torchEmptyWarned then
+			print("OUT OF TORCHES - CONTINUING WITHOUT LIGHTING")
+			self.torchEmptyWarned = true
+		end
+		return false
+	end
+
+	local startOrientation = self.orientation
+	local startSlot = turtle.getSelectedSlot()
+	local lowerY = self.pos.y
+
+	-- The upper tunnel cell must be open; never dig upward just to place light.
+	local blockedUp = turtle.inspectUp()
+	if blockedUp or not turtle.up() then
+		self:turnTo(startOrientation)
+		self:select(startSlot)
+		return false
+	end
+	-- Temporary placement movement is not a navigable road edge.
+	self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+	self.pos.y = self.pos.y + 1
+	self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+
+	local sideOffset = (side or -1) < 0 and -1 or 1
+	self:turnTo(startOrientation + sideOffset)
+
+	-- Only carve a torch recess into a real wall. If this side is already open
+	-- (intersection/cave), skip it rather than placing a torch in travel space.
+	local hasWall,wallData = turtle.inspect()
+	local wallName = hasWall and wallData and wallData.name or nil
+	local placed = false
+
+	if hasWall and not checkDisallowed(wallName) then
+		self.allowTorchNicheDig = true
+		local dug = self:dig()
+		self.allowTorchNicheDig = false
+
+		if dug then
+			self:select(slot)
+			placed = turtle.place()
+			local target = self.pos + self.vectors[self.orientation]
+			if placed then
+				self:setMapValue(target.x,target.y,target.z,tunnelTorchItem)
+				print("TORCH",sideOffset < 0 and "LEFT" or "RIGHT",
+					"remaining",self:countTunnelTorches())
+			else
+				-- Keep the tunnel wall neat if the torch itself could not be placed.
+				if self:getTunnelMaterialSlot() then
+					self:placeBlock(veinBackfillItem)
+				end
+			end
+		end
+	end
+
+	self:turnTo(startOrientation)
+
+	-- Return to the lower travel lane. A teammate below is traffic, not a block
+	-- to mine; give it a brief chance to clear.
+	local returned = false
+	for _=1,20 do
+		if turtle.down() then
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+			self.pos.y = self.pos.y - 1
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+			returned = true
+			break
+		end
+		local hasDown,data = turtle.inspectDown()
+		if hasDown and not isTurtleBlockId(data and data.name) then break end
+		sleep(0.25)
+	end
+
+	self:turnTo(startOrientation)
+	self:select(startSlot)
+
+	if not returned or self.pos.y ~= lowerY then
+		error("TORCH NICHE: COULD NOT RETURN TO LOWER TUNNEL CELL",0)
+	end
+
+	if placed then
+		-- LABENHANCED_LEFT_WALL_TORCHES
+		-- Keep every mining-row torch on the LEFT wall relative to the
+		-- turtle's current direction of travel. Do not alternate sides.
+		self.tunnelTorchSide = -1
+		self.tunnelTorchSteps = 0
+	end
+	return placed
+end
+
+function Miner:maybePlaceTunnelTorch()
+	if not self.autoTunnelTorches then return false end
+	self.tunnelTorchSteps = (self.tunnelTorchSteps or 0) + 1
+	if self.tunnelTorchSteps < tunnelTorchSpacing then return false end
+	return self:placeTunnelTorchNiche(self.tunnelTorchSide or -1)
+end
+
 function Miner:inspectTunnelShellFace(direction, allowOre)
 	local hasBlock, data
 	local target
@@ -3651,9 +4103,25 @@ function Miner:tunnel(length, direction, noInspect)
 				self.activeTunnelAnchor = vector.new(self.pos.x,self.pos.y,self.pos.z)
 				self:displaceLavaAhead()
 			end
-			if not digFunc(self) then 
-				-- if two turtles get in each others way, steps could be skipped
-				-- try to navigate to next step, else quit
+			local moved,_,moveReason = digFunc(self)
+			if not moved and moveReason == "traffic" then
+				-- LABENHANCED_COOP_MINING_TRAFFIC
+				-- We should not queue behind another working turtle. Use the
+				-- open 2-high headspace as a passing/yield bay, then retry once.
+				local yielded = self:yieldForTurtleTraffic(4)
+				if yielded then
+					moved,_,moveReason = digFunc(self)
+				else
+					-- If we could not safely rejoin the floor lane, do not ever
+					-- continue mining from the upper cell.
+					self.lastNavigationFailureReason = "traffic_jam_timeout"
+					result = false
+					break
+				end
+			end
+			if not moved then
+				-- If the step still cannot be made, only use already-open roads
+				-- for recovery. No collision recovery is allowed to dig a bypass.
 				if i < length - 1 then
 					local newPos = self.pos + directionVector * 2
 					if not self:navigateOpenPathToPos(newPos.x, newPos.y, newPos.z) then
@@ -3682,6 +4150,9 @@ function Miner:tunnel(length, direction, noInspect)
 			end
 			self.activeTunnelAnchor = vector.new(self.pos.x,self.pos.y,self.pos.z)
 			self:maintainAndInspectTunnelCell(not noInspect)
+			if self.autoTunnelTorches and not noInspect then
+				self:maybePlaceTunnelTorch()
+			end
 		end
 
 		self:updateProgress("tunnel", i)
