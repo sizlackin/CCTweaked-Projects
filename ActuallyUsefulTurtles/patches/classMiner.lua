@@ -1247,6 +1247,7 @@ function Miner:queueTunnelUpdate(pos,dir,state,opts)
 		seen=opts.seen or os.epoch("utc"),
 		blockedUntil=opts.blockedUntil,
 		resume=opts.resume,
+		blockedReason=opts.blockedReason, -- LABENHANCED_TORCH_REROUTE
 	}
 	local index = self.tunnelPendingIndex[key]
 	if index then
