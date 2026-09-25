@@ -1001,6 +1001,7 @@ function MapDisplay:setGroupArea(group)
 		finish=finish,
 		color=group.getStatusColor and group:getStatusColor() or colors.green,
 		groupId=group.id,
+		preciseOutline=true, -- LABENHANCED_PRECISE_TASK_OUTLINE
 	})
 	self.fullRedraw = true
 	return true
@@ -1041,7 +1042,8 @@ function MapDisplay:drawAreas()
 		-- keeping the red outline at the exact selected world coordinate.
 		for _,area in ipairs(areas) do
 			local start, finish, color = area.start, area.finish, area.color
-			if start and finish and not area.selectionAnchor and not area.selectionOutline then
+			if start and finish and not area.selectionAnchor
+			and not area.selectionOutline and not area.preciseOutline then
 				local sx, sz = self:transformSubPos(start)
 				local ex, ez = self:transformSubPos(finish)
 				self.drawer:drawBox(sx, sz, ex-sx+1, ez-sz+1, blitTab[color], 1)
@@ -1105,15 +1107,13 @@ function MapDisplay:redrawSelectionOutline()
 	-- A 2x3 terminal cell can only contain two colors, so a one-pixel red border
 	-- could be quantized away whenever a tunnel introduced extra colors.
 	--
-	-- Composite ONLY the live selection border after the terrain frame instead.
-	-- Each touched terminal cell keeps one dominant terrain color plus red, which
-	-- guarantees the border survives while preserving true 2x3 pixel alignment.
+	-- Composite live selection AND active-task borders after the terrain frame.
+	-- Each touched terminal cell keeps one dominant terrain color plus the
+	-- outline color, so tunnel/floor colors cannot quantize the border away.
 	if not self.areas or not self.drawer or not PixelDrawer.pixelsToChar then return end
 
 	local frame = self.drawer.frame
 	local fw,fh = self.drawer.width,self.drawer.height
-	local red = blitTab[colors.red]
-
 	local function addPixel(cells,px,py)
 		if px < 1 or px > fw or py < 1 or py > fh then return end
 		local cx = math.floor((px-1)/2)+1
@@ -1131,7 +1131,8 @@ function MapDisplay:redrawSelectionOutline()
 	end
 
 	for _,area in ipairs(self.areas) do
-		if area.selectionOutline and area.start and area.finish then
+		if (area.selectionOutline or area.preciseOutline)
+		and area.start and area.finish then
 			local sx,sy = self:transformSubPos(area.start)
 			local ex,ey = self:transformSubPos(area.finish)
 			if sx > ex then sx,ex = ex,sx end
@@ -1162,6 +1163,7 @@ function MapDisplay:redrawSelectionOutline()
 				-- Pick the most common NON-selection terrain color in this cell.
 				-- The resulting character uses exactly {terrain, red}, so red
 				-- can never be discarded by color quantization.
+				local outlineColor = blitTab[area.color or colors.red]
 				local counts,bg,best = {},blitTab[self.backgroundColor],-1
 				for i=1,6 do
 					if not cell.mask[i] then
@@ -1172,7 +1174,7 @@ function MapDisplay:redrawSelectionOutline()
 				end
 
 				local p = {}
-				for i=1,6 do p[i] = cell.mask[i] and red or bg end
+				for i=1,6 do p[i] = cell.mask[i] and outlineColor or bg end
 				local txt,fg,bgc = PixelDrawer.pixelsToChar(
 					p[1],p[2],p[3],p[4],p[5],p[6]
 				)
