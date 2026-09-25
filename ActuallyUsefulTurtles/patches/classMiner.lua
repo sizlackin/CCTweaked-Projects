@@ -2746,9 +2746,19 @@ local function accessPosKey(x,y,z)
 	return x .. "," .. y .. "," .. z
 end
 
+local function sameAccessPos(a,b)
+	-- LABENHANCED_SHARED_ACCESS_POS_FIX
+	-- Positions received over rednet are plain tables, not vector objects.
+	-- Never use table identity (self.pos == target) for network-supplied coords.
+	return a and b
+		and a.x == b.x
+		and a.y == b.y
+		and a.z == b.z
+end
+
 function Miner:followExistingTunnelToward(target,trafficAvoid,replanDepth)
 	if not target then return false end
-	if self.pos == target then return true end
+	if sameAccessPos(self.pos,target) then return true end
 	trafficAvoid = trafficAvoid or {}
 	replanDepth = replanDepth or 0
 
@@ -2890,7 +2900,13 @@ function Miner:digNeatAccessTunnelTo(target)
 		self:tunnelDown(-dy,true)
 	end
 
-	return self.pos == target
+	local reached = sameAccessPos(self.pos,target)
+	if not reached then
+		print("ACCESS END MISMATCH",
+			"at",self.pos.x,self.pos.y,self.pos.z,
+			"wanted",target.x,target.y,target.z)
+	end
+	return reached
 end
 
 function Miner:reachSharedMineEntrance(sharedEntry, sharedEnd, accessEntry, isLeader)
@@ -2909,7 +2925,7 @@ function Miner:reachSharedMineEntrance(sharedEntry, sharedEnd, accessEntry, isLe
 		-- With 3-4 turtles, continue the SAME maintained 1x2 corridor across
 		-- the stripe entries inside the green box. This is the only distribution
 		-- spine; followers never create parallel approaches.
-		if sharedEnd and self.pos ~= sharedEnd then
+		if sharedEnd and not sameAccessPos(self.pos,sharedEnd) then
 			if not self:navigateOpenPathToPos(sharedEnd.x,sharedEnd.y,sharedEnd.z) then
 				print("CREATING SHARED IN-BOX ACCESS SPINE")
 				if not self:digNeatAccessTunnelTo(sharedEnd) then return false end
@@ -2918,7 +2934,7 @@ function Miner:reachSharedMineEntrance(sharedEntry, sharedEnd, accessEntry, isLe
 
 		-- Return along the just-created open spine to this turtle's own entry.
 		local ownEntry = accessEntry or sharedEntry
-		if self.pos ~= ownEntry then
+		if not sameAccessPos(self.pos,ownEntry) then
 			if not self:navigateOpenPathToPos(ownEntry.x,ownEntry.y,ownEntry.z) then
 				return false
 			end
@@ -2927,11 +2943,24 @@ function Miner:reachSharedMineEntrance(sharedEntry, sharedEnd, accessEntry, isLe
 	else
 		-- Followers are not allowed to make a second access tunnel. Wait until
 		-- the leader has opened a complete path all the way to this stripe entry.
+		-- LABENHANCED_SHARED_ACCESS_POS_FIX
+		-- Do not spam the routefinder while the entry is still unknown rock.
 		local ownEntry = accessEntry or sharedEntry
 		print("WAITING FOR SHARED MINE ACCESS")
 		for attempt=1,300 do
-			if self:navigateOpenPathToPos(ownEntry.x,ownEntry.y,ownEntry.z) then
+			if sameAccessPos(self.pos,ownEntry) then
 				return true
+			end
+
+			local entryValue = self:getMapValue(ownEntry.x,ownEntry.y,ownEntry.z)
+			if entryValue == 0 then
+				if self:navigateOpenPathToPos(ownEntry.x,ownEntry.y,ownEntry.z) then
+					return true
+				end
+			end
+
+			if attempt % 15 == 0 then
+				print("SHARED ACCESS NOT READY YET",attempt.."/300")
 			end
 			sleep(1)
 		end
@@ -3031,7 +3060,7 @@ function Miner:mineArea(start, finish)
 			-- connection from the shared entrance.
 			if reachedArea then
 				start, finish, orientation = self:getAreaStart(start,finish)
-				if self.pos ~= start then
+				if not sameAccessPos(self.pos,start) then
 					if not self:navigateOpenPathToPos(start.x,start.y,start.z) then
 						reachedArea = self:digNeatAccessTunnelTo(start)
 					end
