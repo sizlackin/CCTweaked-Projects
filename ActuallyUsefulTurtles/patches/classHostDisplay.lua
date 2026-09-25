@@ -490,8 +490,20 @@ function HostDisplay:refreshGroupsHeader()
 	local win = self.winGroups
 	if not win or not win.boxHeader then return end
 
-	local width = self:getWidth()
-	win.boxHeader:setWidth(width)
+	-- Header objects live in the inner window, which a vertical scrollbar
+	-- already narrows by one. The close button is an overlay painted on top of
+	-- that inner window's last three columns, so the header has to stop short
+	-- of it or "create" ends up underneath the X.
+	local inner = win.innerWin
+	local width = (inner and inner.getWidth and inner:getWidth()) or self:getWidth()
+
+	local reserved = 0
+	if win.btnClose and win.btnClose.visible then
+		reserved = (win.btnClose.width or 3) + 1
+	end
+	local usable = math.max(13, width - reserved)
+
+	win.boxHeader:setWidth(usable)
 	win.boxHeader:setBorderColor(colors.gray)
 
 	local total, active = 0, 0
@@ -502,17 +514,22 @@ function HostDisplay:refreshGroupsHeader()
 		end
 	end
 
-	local summary = string.format("%d GRP  %d ACT", total, active)
-	win.lblSummary:setText(summary)
-
-	-- create sits at the trailing edge, the summary just inside it
+	-- "create" is pinned to the right of the plate, the counts sit just inside
+	-- it, and the counts drop out entirely before anything can overlap.
+	local titleEnd = 13
 	local btnW = win.btnAdd.width or 8
-	local btnX = math.max(14, width - btnW)
+	local btnX = usable - btnW + 1
+	if btnX < titleEnd then btnX = titleEnd end
 	win.btnAdd:setPos(btnX, 1)
 
-	local sx = btnX - #summary - 1
-	if sx < 14 then sx = 14 end
-	win.lblSummary:setPos(sx, 1)
+	local summary = string.format("%d GRP  %d ACT", total, active)
+	local sx = btnX - #summary - 2
+	if sx >= titleEnd then
+		win.lblSummary:setText(summary)
+		win.lblSummary:setPos(sx, 1)
+	else
+		win.lblSummary:setText("")
+	end
 end
 
 function HostDisplay:updateGroups()

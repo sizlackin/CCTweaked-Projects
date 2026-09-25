@@ -44,6 +44,10 @@ local layout = {
 	infoX      = 29,               -- key/value block
 	infoPad    = 1,
 	dividerRow = 6,
+	-- The window's close button is a 3-wide overlay pinned to the right of the
+	-- inner window. Keep the trailing edge clear of it so the uptime cannot
+	-- slide underneath the X while the list is scrolled.
+	rightGutter = 4,
 }
 
 -- Compact, uppercase status wording. Denser than the raw enum without
@@ -198,7 +202,8 @@ function TaskGroupControl:onResize() -- super override
 	-- LABENHANCED_GROUPS_HMI
 	-- The right-hand plate is the only element that tracks the window width.
 	if self.boxInfo then
-		self.boxInfo:setWidth(math.max(1, self.width - layout.infoX))
+		self.boxInfo:setWidth(
+			math.max(1, self.width - layout.rightGutter - layout.infoX + 1))
 	end
 end
 
@@ -213,14 +218,16 @@ function TaskGroupControl:redraw() -- super override
 	-- used for the divider rather than a box-drawing glyph so it renders the
 	-- same on every CraftOS font.
 	local c = default.colors
-	local span = math.max(0, self.width - layout.coordX + 1)
+	local rightEdge = self.width - layout.rightGutter
+
+	local span = math.max(0, rightEdge - layout.coordX + 1)
 	if span > 0 then
 		self:drawFilledBox(layout.coordX, layout.dividerRow, span, 1, c.divider)
 	end
 
 	local uptime = self.lblTime and self.lblTime:getText() or ""
 	if #uptime > 0 then
-		local ux = self.width - #uptime
+		local ux = rightEdge - #uptime + 1
 		if ux > layout.infoX then
 			self:drawText(ux, layout.headerRow, uptime, c.caption, self.backgroundColor)
 		end
@@ -245,7 +252,8 @@ function TaskGroupControl:initialize()
 	self.boxCoords = Box:new(layout.coordX, layout.dataTop, layout.coordW,
 		layout.dataRows, c.plate)
 	self.boxInfo = Box:new(layout.infoX, layout.dataTop,
-		math.max(1, self.width - layout.infoX), layout.dataRows, c.plate)
+		math.max(1, self.width - layout.rightGutter - layout.infoX + 1),
+		layout.dataRows, c.plate)
 
 	self:addObject(self.boxStrip)
 	self:addObject(self.boxCoords)
