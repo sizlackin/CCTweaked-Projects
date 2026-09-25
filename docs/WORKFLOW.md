@@ -7,8 +7,8 @@ world is never a git repo.
 | | |
 |---|---|
 | Source / git | `/home/cesar/Projects/CCTweaked-Projects` |
-| Live controller (id 9) | `.../saves/The Fuckening/computercraft/computer/9` |
-| Convenience symlink | `/home/cesar/Projects/ActuallyUsefulTurtles-LIVE` → computer/9 (inspection only, **not** git source) |
+| **Main Controller** (computer 9) | `.../saves/The Fuckening/computercraft/computer/9` |
+| Convenience symlink | `/home/cesar/Projects/ActuallyUsefulTurtles-LIVE` → Main Controller (inspection only, **not** git source) |
 | Backups | `/home/cesar/Backups/ActuallyUsefulTurtles/` |
 | Turtles | ids 12, 14, 15, 16 |
 
@@ -25,7 +25,7 @@ git pull
 
 Then in game:
 
-- **Reboot controller 9** if the deploy said controller reboot required.
+- **Reboot the Main Controller** if the deploy said controller reboot required.
 - **Reboot turtles 12/14/15/16** only if it said turtle reboot required, and
   always *after* the controller.
 

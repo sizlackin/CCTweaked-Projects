@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Snapshot the live Actually Useful Turtles controller (computer 9).
+"""Snapshot the live Main Controller (computer 9).
 
   ./tools/backup-controller              full snapshot, including runtime state
   ./tools/backup-controller --code-only  source directories only, no state
@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from aut_common import (  # noqa: E402
-    FULL_BACKUPS, LIVE, CONTROLLER_DIRS, TURTLE_DIRS,
+    FULL_BACKUPS, LIVE, CONTROLLER_DIRS, CONTROLLER_NAME, TURTLE_DIRS,
     bold, blue, green, yellow, timestamp, verify_live_root,
 )
 
@@ -78,7 +78,7 @@ def main():
         return 1
     dest.parent.mkdir(parents=True, exist_ok=True)
 
-    print(bold("Backing up live controller"))
+    print(bold(f"Backing up live {CONTROLLER_NAME}"))
     print(f"  from : {LIVE}")
     print(f"  to   : {dest}")
 

@@ -11,13 +11,14 @@ import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Locations
+# Locations - the Main Controller is computer 9
 # ---------------------------------------------------------------------------
 
 REPO = Path(__file__).resolve().parent.parent
 AUT = REPO / "ActuallyUsefulTurtles"
 MANIFEST = REPO / "tools" / "manifest.tsv"
 
+CONTROLLER_NAME = "Main Controller"   # computer 9
 CONTROLLER_ID = "9"
 
 SAVE = Path(
@@ -132,7 +133,7 @@ def die(msg: str, code: int = 1):
 # ---------------------------------------------------------------------------
 
 def verify_live_root():
-    """Refuse to continue unless LIVE really is controller 9's directory."""
+    """Refuse to continue unless LIVE really is the Main Controller's directory."""
     if LIVE.name != CONTROLLER_ID:
         die(f"live path does not end in /{CONTROLLER_ID}: {LIVE}")
     if LIVE.parent.name != "computer":

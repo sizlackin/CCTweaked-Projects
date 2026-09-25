@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Copy live controller code INTO the repo (live -> repo). The reverse of deploy.
+"""Copy Main Controller code INTO the repo (live -> repo). The reverse of deploy.
 
-Use this when the live controller is ahead of the repo, which happens whenever
+Use this when the Main Controller is ahead of the repo, which happens whenever
 an installer was run in game and the result was never committed.
 
   ./tools/import-live --dry-run           show what would be imported

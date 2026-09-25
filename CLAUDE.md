@@ -39,7 +39,7 @@ learned state. Read `docs/WORKFLOW.md` before doing anything structural.
 | `tools/manifest.tsv` | the only source → live mapping that exists |
 | `docs/WORKFLOW.md` | full explanation |
 
-Live controller (id 9):
+**Main Controller** (computer 9):
 `/home/cesar/.local/share/PrismLauncher/instances/Delightful Machinations/minecraft/saves/The Fuckening/computercraft/computer/9`
 
 ## Normal task shape

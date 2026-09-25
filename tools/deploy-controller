@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deploy repo source onto the live Actually Useful Turtles controller (id 9).
+"""Deploy repo source onto the live Main Controller (computer 9).
 
   ./tools/deploy-controller --dry-run            show exactly what would change
   ./tools/deploy-controller                      deploy every changed mapped file
@@ -9,8 +9,8 @@
   ./tools/deploy-controller --yes                 skip the confirmation prompt
 
 Guarantees:
-  * refuses to run unless the target really is .../computer/9 and carries the
-    expected controller files
+  * refuses to run unless the target really is the Main Controller
+    (.../computer/9) and carries the expected controller files
   * every live file it is about to modify is backed up first, under
     /home/cesar/Backups/ActuallyUsefulTurtles/deploy/<timestamp>/
   * copies only files listed in tools/manifest.tsv
@@ -35,7 +35,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from aut_common import (  # noqa: E402
-    CONTROLLER_DIRS, DEPLOY_BACKUPS, DIFFER, LIVE, NO_LIVE, NO_REPO, REPO, SAME,
+    CONTROLLER_DIRS, CONTROLLER_NAME, DEPLOY_BACKUPS, DIFFER, LIVE, NO_LIVE,
+    NO_REPO, REPO, SAME,
     TURTLE_DIRS, TURTLE_IDS, assert_safe_target, bold, blue, compare, die, green,
     live_is_known, load_manifest, red, sha, timestamp, unified_diff,
     verify_live_root, yellow,
@@ -178,7 +179,7 @@ def main():
 
     if not args.yes:
         try:
-            reply = input(bold(f"\nDeploy {len(changed)} file(s) to controller 9? [y/N] "))
+            reply = input(bold(f"\nDeploy {len(changed)} file(s) to the {CONTROLLER_NAME}? [y/N] "))
         except EOFError:
             reply = ""
         if reply.strip().lower() not in ("y", "yes"):
@@ -259,7 +260,7 @@ def print_reboot_notice(ctrl, turtles, with_runtime, dry):
             print(f"                {p}")
         if len(ctrl) > 8:
             print(f"                ... and {len(ctrl) - 8} more")
-        print("              In game, on computer 9:  reboot")
+        print(f"              In game, on the {CONTROLLER_NAME}:  reboot")
     else:
         print(f"  controller: {green('not required')} - no controller-side file changed.")
 

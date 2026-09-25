@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare repo source against the live Actually Useful Turtles controller.
+"""Compare repo source against the live Main Controller (computer 9).
 
   ./tools/diff-controller                 status table for every manifest entry
   ./tools/diff-controller --show          also print unified diffs for changes
@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from aut_common import (  # noqa: E402
-    AUT, LIVE, REPO, DIFFER, NO_LIVE, NO_REPO, SAME,
+    AUT, CONTROLLER_NAME, LIVE, REPO, DIFFER, NO_LIVE, NO_REPO, SAME,
     GENERATED_OR_BOOTSTRAP, bold, blue, compare, green, is_protected, load_manifest,
     live_is_known, live_source_files, red, sha, unified_diff, verify_live_root,
     yellow,
@@ -97,7 +97,7 @@ def main():
     verify_live_root()
     entries = load_manifest()
 
-    print(bold("Source  <->  live controller 9"))
+    print(bold(f"Source  <->  live {CONTROLLER_NAME}"))
     print(f"  repo : {REPO}")
     print(f"  live : {LIVE}\n")
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Restore live controller files from a previous deploy backup.
+"""Restore Main Controller (computer 9) files from a previous deploy backup.
 
   ./tools/rollback-controller                       list recent deploys
   ./tools/rollback-controller <timestamp>           restore that deploy's files
