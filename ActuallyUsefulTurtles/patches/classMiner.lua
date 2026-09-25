@@ -2447,7 +2447,7 @@ function Miner:mineVein()
 	self.taskList:remove(currentTask)
 end
 
-function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect)
+function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps)
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name}, true)
 	print("stripmining", "rows", rows, "levels", levels)
 
@@ -2455,7 +2455,7 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 
 	local taskState = currentTask.taskState
 	if taskState then
-		rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect = tableunpack(taskState.args,1,taskState.args.n)
+		rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps = tableunpack(taskState.args,1,taskState.args.n)
 	else
 		taskState = {
 			stage = 1,
@@ -2469,7 +2469,7 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 				startOrientation = self.orientation,
 				torchSide = -1, -- fixed left wall
 			},
-			args = tablepack(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect),
+			args = tablepack(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps),
 		}
 	end
 	local vars = taskState.vars
@@ -2579,7 +2579,12 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 
 					if currentRow < rows then
 						self:turnTo(vars.rowOrientation + vars.tunnelDirection)
-						self:tunnelStraight(rowFactor, noInspect)
+						-- LABENHANCED_EFFICIENT_STRIP_ROWS
+						-- Normally 3 blocks. The last connector can be 2 blocks
+						-- when needed to cover the far edge without crossing this
+						-- turtle's assigned stripe boundary.
+						local connectorLength = (rowSteps and rowSteps[currentRow]) or rowFactor
+						self:tunnelStraight(connectorLength, noInspect)
 						if currentRow%2 == 1 then
 							self:turnTo(vars.rowOrientation-2)
 						else
@@ -3124,6 +3129,33 @@ function Miner:connectMiningFarEdge(startPos,finishPos,orientation)
 	return ok
 end
 
+-- LABENHANCED_EFFICIENT_STRIP_ROWS
+-- Build the densest useful branch-mine row pattern without overlapping scans.
+-- Straight rows stay at most 3 blocks apart, because each 1x2 tunnel inspects
+-- one block into both side walls. If the far edge would otherwise sit two
+-- blocks beyond the last row, use a final 2-block connector instead of trying
+-- to step 3 blocks outside the assigned stripe.
+local function buildEfficientStripRowSteps(shortSpan,rowFactor)
+	rowFactor = rowFactor or 3
+	shortSpan = math.max(0,math.floor(shortSpan or 0))
+	local steps = {}
+	local travelled = 0
+
+	while shortSpan - travelled > 1 do
+		local remaining = shortSpan - travelled
+		local step
+		if remaining == 2 then
+			step = 2
+		else
+			step = math.min(rowFactor,remaining)
+		end
+		steps[#steps+1] = step
+		travelled = travelled + step
+	end
+
+	return #steps + 1, steps
+end
+
 function Miner:mineArea(start, finish) 
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name}, true)
 	-- mine area within start and finish pos
@@ -3180,13 +3212,13 @@ function Miner:mineArea(start, finish)
 		
 		local rowFactor = 3
 		local levelFactor = 2
-		local rowLength, rows, levels
+		local rowLength, rows, levels, rowSteps
 		if orientation%2 == 0 then
 			rowLength = depth
-			rows = (width+rowFactor)/rowFactor
+			rows,rowSteps = buildEfficientStripRowSteps(width,rowFactor)
 		else
 			rowLength = width
-			rows = (depth+rowFactor)/rowFactor
+			rows,rowSteps = buildEfficientStripRowSteps(depth,rowFactor)
 		end
 		if diff.y < 0 then
 			levels = math.floor(((-height-levelFactor)/levelFactor)+0.5)
@@ -3194,7 +3226,6 @@ function Miner:mineArea(start, finish)
 			levels = math.floor(((height+levelFactor)/levelFactor)+0.5)
 		end
 		
-		rows = math.floor(rows+0.5)
 		--self.map:load()
 		
 		print("start", start,"end",finish, "diff", diff, "levels", levels)
@@ -3290,18 +3321,16 @@ function Miner:mineArea(start, finish)
 
 			if orientation%2 == 0 then
 				rowLength = depth
-				rows = (width+rowFactor)/rowFactor
+				rows,rowSteps = buildEfficientStripRowSteps(width,rowFactor)
 			else
 				rowLength = width
-				rows = (depth+rowFactor)/rowFactor
+				rows,rowSteps = buildEfficientStripRowSteps(depth,rowFactor)
 			end
 			if diff.y < 0 then
 				levels = math.floor(((-height-levelFactor)/levelFactor)+0.5)
 			else
 				levels = math.floor(((height+levelFactor)/levelFactor)+0.5)
 			end
-			rows = math.floor(rows+0.5)
-
 			self:turnTo(orientation)
 			self:setActiveMiningBounds(start,finish)
 
@@ -3310,7 +3339,7 @@ function Miner:mineArea(start, finish)
 			taskState.ignorePosition = true
 			self.checkPointer:save(self)
 
-			self:stripMine(rowLength, rows, levels)
+			self:stripMine(rowLength, rows, levels, rowFactor, levelFactor, nil, nil, rowSteps)
 
 			-- LABENHANCED_FAR_EDGE_SPINE
 			-- Turn the striped "comb" into one connected tunnel network at the
