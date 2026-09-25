@@ -6,8 +6,8 @@ if turtle then error("Run this on the main controller.",0) end
 
 local files = {
   {
-    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/patches/turtle-receive.lua",
-    marker="LABENHANCED_STOP_LATCH_FIX",
+    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/8e93e5fad24e08f799b513700b4ab1adf747560c/ActuallyUsefulTurtles/patches/turtle-receive.lua",
+    marker="LABENHANCED_STALE_CHECKPOINT_RECOVERY",
     targets={"turtle/receive.lua"},
   },
   {
