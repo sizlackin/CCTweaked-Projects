@@ -86,9 +86,15 @@ function Mapper:surveyCurrent(existingNode)
 			local name = data and data.name or "unknown:block"
 			m:setMapValue(target.x,target.y,target.z,name)
 			if isTunnelDecoration(name) then
-				-- Keep this as an explorable frontier. The mapper preserves the
-				-- torch and takes the existing upper half of the 2-high tunnel.
-				self:_queue(pos,entry.name,TunnelMap.STATE.UNMAPPED)
+				-- LABENHANCED_TORCH_REROUTE
+				-- Old mapper versions could incorrectly leave torch edges BLOCKED,
+				-- so those are still allowed one physical bypass attempt. Once this
+				-- mapper has actually tried the upper route and proven it unusable,
+				-- remember that fact and do not recreate the same frontier forever.
+				if not (state == TunnelMap.STATE.BLOCKED
+				and conn and conn.blockedReason == "decoration_no_bypass") then
+					self:_queue(pos,entry.name,TunnelMap.STATE.UNMAPPED)
+				end
 			elseif state ~= TunnelMap.STATE.BLOCKED then
 				self:_queue(pos,entry.name,TunnelMap.STATE.BLOCKED)
 			end
@@ -143,7 +149,7 @@ end
 function Mapper:bypassDecoration(frontier,blockName)
 	if not frontier or not orientForDir[frontier.dir]
 	or not isTunnelDecoration(blockName) then
-		return false
+		return false,"not_decoration"
 	end
 
 	local m = self.miner
@@ -160,8 +166,13 @@ function Mapper:bypassDecoration(frontier,blockName)
 	m:flushTunnelUpdatesSync()
 
 	if not m:up() then
+		self:_queue(source,frontier.dir,TunnelMap.STATE.BLOCKED,{
+			blockedReason="decoration_no_bypass",
+		})
+		m:flushTunnelUpdatesSync()
 		m:turnTo(originalOrientation)
-		return false
+		print("TORCH BYPASS BLOCKED - REROUTING")
+		return false,"upper_entry_blocked"
 	end
 
 	m:turnTo(orient)
@@ -169,8 +180,13 @@ function Mapper:bypassDecoration(frontier,blockName)
 		if not m:forward() then
 			for j=1,travelled do m:back() end
 			m:down()
+			self:_queue(source,frontier.dir,TunnelMap.STATE.BLOCKED,{
+				blockedReason="decoration_no_bypass",
+			})
+			m:flushTunnelUpdatesSync()
 			m:turnTo(originalOrientation)
-			return false
+			print("TORCH BYPASS BLOCKED - REROUTING")
+			return false,"upper_path_blocked"
 		end
 		travelled = travelled + 1
 
@@ -186,8 +202,13 @@ function Mapper:bypassDecoration(frontier,blockName)
 			if not isTunnelDecoration(name) then
 				for j=1,travelled do m:back() end
 				m:down()
+				self:_queue(source,frontier.dir,TunnelMap.STATE.BLOCKED,{
+					blockedReason="decoration_no_bypass",
+				})
+				m:flushTunnelUpdatesSync()
 				m:turnTo(originalOrientation)
-				return false
+				print("TORCH BYPASS BLOCKED - REROUTING")
+				return false,"no_lower_landing"
 			end
 			-- Still above another torch: continue through upper tunnel space.
 		end
@@ -195,8 +216,13 @@ function Mapper:bypassDecoration(frontier,blockName)
 
 	for j=1,travelled do m:back() end
 	m:down()
+	self:_queue(source,frontier.dir,TunnelMap.STATE.BLOCKED,{
+		blockedReason="decoration_no_bypass",
+	})
+	m:flushTunnelUpdatesSync()
 	m:turnTo(originalOrientation)
-	return false
+	print("TORCH BYPASS BLOCKED - REROUTING")
+	return false,"bypass_limit"
 end
 
 
