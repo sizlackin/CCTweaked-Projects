@@ -1033,12 +1033,27 @@ function MapDisplay:drawAreas()
 			end
 		end
 
+		-- Normal area outlines are subpixel-thin. Selection anchors are different:
+		-- PixelDrawer can encode only two colors inside each 2x3 terminal cell, so a
+		-- one-subpixel green/magenta anchor can be quantized away when terrain and
+		-- the red outline occupy the same cell. Fill the terminal cell containing
+		-- each anchor instead. This keeps the marker visible in every quadrant and
+		-- at every zoom level without changing its world coordinate.
 		for _,area in ipairs(areas) do
 			local start, finish, color = area.start, area.finish, area.color
-			if start and finish then
+			if start and finish and not area.selectionAnchor then
 				local sx, sz = self:transformSubPos(start)
 				local ex, ez = self:transformSubPos(finish)
 				self.drawer:drawBox(sx, sz, ex-sx+1, ez-sz+1, blitTab[color], 1)
+			end
+		end
+		for _,area in ipairs(areas) do
+			if area.selectionAnchor and area.start and area.color then
+				local sx, sz = self:transformSubPos(area.start)
+				-- Align to PixelDrawer's 2x3 subpixel character cell.
+				local cellX = math.floor((sx - 1) / 2) * 2 + 1
+				local cellZ = math.floor((sz - 1) / 3) * 3 + 1
+				self.drawer:drawBox(cellX, cellZ, 2, 3, blitTab[area.color], 1)
 			end
 		end
 	end
