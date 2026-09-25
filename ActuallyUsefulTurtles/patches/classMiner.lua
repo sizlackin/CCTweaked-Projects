@@ -3509,6 +3509,10 @@ function Miner:inspectTunnelShellFace(direction, allowOre)
 end
 
 function Miner:maintainAndInspectTunnelCell(allowOre)
+	-- LABENHANCED_TUNNEL_FLOOR_LOCK
+	-- Invariant: this routine must always finish on the SAME lower tunnel cell
+	-- it started on. Access/spine tunnels use noInspect=true, so they never need
+	-- to physically climb into the upper air cell just to inspect ore.
 	local startOrientation = self.orientation
 	local lowerPos = vector.new(self.pos.x,self.pos.y,self.pos.z)
 
@@ -3533,7 +3537,18 @@ function Miner:maintainAndInspectTunnelCell(allowOre)
 		self:digUp()
 	end
 
-	-- Scan upper side walls + ceiling in the same pass.
+	-- Access connectors/spines are no-inspect tunnels. Their only requirement is
+	-- a clear 1x2 interior; do NOT climb into the upper cell. This removes the
+	-- failure mode where another turtle/falling block occupies the lower cell and
+	-- the leader accidentally continues tunnelling one block too high.
+	if not allowOre then
+		self:turnTo(startOrientation)
+		self:repairPhiloliteBlastDamage()
+		return true
+	end
+
+	-- Normal strip mining still scans upper side walls + ceiling for exposed ore.
+	-- If we climb, returning to lowerPos is mandatory before continuing.
 	if turtle.up() then
 		self:setMapValue(lowerPos.x,lowerPos.y,lowerPos.z,0)
 		self.pos.y = self.pos.y + 1
@@ -3546,19 +3561,47 @@ function Miner:maintainAndInspectTunnelCell(allowOre)
 		self:turnTo(startOrientation)
 		self:inspectTunnelShellFace("up",allowOre)
 
-		if turtle.down() then
-			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
-			self.pos.y = self.pos.y - 1
-			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
-		else
-			print("TUNNEL SCAN: unable to return to lower tunnel cell")
+		local returned = false
+		for attempt=1,20 do
+			if turtle.down() then
+				self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+				self.pos.y = self.pos.y - 1
+				self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+				returned = true
+				break
+			end
+
+			local blocked,data = turtle.inspectDown()
+			local name = blocked and data and data.name or nil
+
+			if isTurtleBlockId(name) then
+				if attempt == 1 then
+					print("TUNNEL SCAN: turtle below - waiting to return")
+				end
+				sleep(0.25)
+			elseif blocked and not checkDisallowed(name) then
+				-- The lower interior was known air when we climbed. Falling
+				-- gravel/sand or another safe mineable block may have entered it.
+				-- Re-open that interior cell, never the floor below it.
+				self:digDown()
+				sleep(0.1)
+			else
+				sleep(0.25)
+			end
+		end
+
+		if not returned then
+			-- Never silently continue from y+1. A hard stop is safer than
+			-- shifting the entire mining/access tunnel to the wrong level.
+			self:turnTo(startOrientation)
+			error("TUNNEL SCAN LOWER CELL BLOCKED",0)
 		end
 	end
 
 	self:turnTo(startOrientation)
 	self:repairPhiloliteBlastDamage()
+	return true
 end
-
 
 function Miner:tunnel(length, direction, noInspect)
 	-- throws error
