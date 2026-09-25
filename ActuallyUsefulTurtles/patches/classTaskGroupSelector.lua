@@ -327,17 +327,17 @@ end
 function TaskGroupSelector:showAreaControls()
 	if not self.mapDisplay then return end
 
-	-- No selection yet: neither DESELECT nor CONFIRM should be visible.
-	if not self.positions or #self.positions == 0 then
+	local count = self.positions and #self.positions or 0
+	if count == 0 then
 		self:clearAreaControls()
 		return
 	end
 
-	-- Keep one set of controls alive while a selection exists.
-	if not self.btnReselectArea then
-		local deselectX, confirmX, controlsY = self:layoutAreaControls()
-		if not deselectX then return end
+	local deselectX, confirmX, controlsY = self:layoutAreaControls()
+	if not deselectX then return end
 
+	-- POS1 exists: DESELECT is the only action available.
+	if not self.btnReselectArea then
 		self.btnReselectArea = Button:new(
 			"DESELECT",
 			deselectX,
@@ -351,30 +351,32 @@ function TaskGroupSelector:showAreaControls()
 			self:deselectArea()
 			return true
 		end
-
-		self.btnConfirmArea = Button:new(
-			"CONFIRM",
-			confirmX,
-			controlsY,
-			10,
-			1,
-			colors.green
-		)
-		self.btnConfirmArea.areaPreviewOwner = self
-		self.btnConfirmArea.click = function()
-			self:confirmAreaSelection()
-			return true
-		end
-
 		self.mapDisplay:addObject(self.btnReselectArea)
-		self.mapDisplay:addObject(self.btnConfirmArea)
 	end
+	self.btnReselectArea:setEnabled(self.selectionMode)
 
-	if self.btnReselectArea then
-		self.btnReselectArea:setEnabled(self.selectionMode)
-	end
-	if self.btnConfirmArea then
-		self.btnConfirmArea:setEnabled(#self.positions == 2)
+	-- CONFIRM must not exist until POS2 has actually been set.
+	if count >= 2 then
+		if not self.btnConfirmArea then
+			self.btnConfirmArea = Button:new(
+				"CONFIRM",
+				confirmX,
+				controlsY,
+				10,
+				1,
+				colors.green
+			)
+			self.btnConfirmArea.areaPreviewOwner = self
+			self.btnConfirmArea.click = function()
+				self:confirmAreaSelection()
+				return true
+			end
+			self.mapDisplay:addObject(self.btnConfirmArea)
+		end
+		self.btnConfirmArea:setEnabled(true)
+	elseif self.btnConfirmArea then
+		self.mapDisplay:removeObject(self.btnConfirmArea)
+		self.btnConfirmArea = nil
 	end
 end
 
