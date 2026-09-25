@@ -221,27 +221,64 @@ node.onReceive = function(msg)
 				end
 			end
 		elseif txt == "FORCE_CLEAR_STALE_TASK" then
-			-- LABENHANCED_STALE_CHECKPOINT_RECOVERY
-			-- This is only for an assignment which the turtle reports as idle
-			-- (no live task stack) after a failed/rebooted checkpoint restore.
-			-- Delete the persisted checkpoint so reboot cannot restore the same
-			-- ghost assignment again.
+			-- LABENHANCED_HARD_STALE_RESET
+			-- Explicit recovery command: clear a restored checkpoint/assignment
+			-- even if its stale task stack is still present. This is only sent
+			-- by controller recovery/Cancel logic.
 			local taskId = data[2]
-			local active = miner and miner.taskList and miner.taskList.first
+			local force = data[3] == true
 			local assignment = miner and miner:getTaskAssignment() or nil
-			if miner and not active
-			and (not taskId or not assignment or assignment.id == taskId) then
-				if assignment then assignment.status = "cancelled" end
+			local assignmentMatches = (not taskId)
+				or (assignment and assignment.id == taskId)
+				or (not assignment)
+
+			if miner and (force or assignmentMatches) then
+				if assignment then
+					assignment.status = "cancelled"
+					assignment.checkpoint = nil
+				end
+
+				-- Kill any restored in-memory execution state.
+				if miner.taskList and miner.taskList.clear then
+					miner.taskList:clear()
+				end
 				miner.currentTaskAssignment = nil
-				miner.stop = true
+				miner.stop = false
+				if miner.clearProgress then miner:clearProgress() end
+
+				-- Remove the matching queued assignment, if it survived reboot.
+				if miner.queue then
+					if taskId and miner.queue.remove then
+						miner.queue:remove(taskId)
+					end
+					-- A checkpoint restore can rehydrate the same assignment in
+					-- multiple persistence layers. In force mode this recovery
+					-- intentionally clears all queued assignment work, but keeps
+					-- direct runtime commands out of persistence anyway.
+					if force then
+						miner.queue.tasks = {}
+					end
+					if miner.queue.save then miner.queue:save() end
+				end
+
 				if miner.checkPointer then
 					miner.checkPointer.checkpoint = nil
+					if miner.checkPointer.file then
+						pcall(function() miner.checkPointer.file.close() end)
+						miner.checkPointer.file = nil
+					end
 				end
 				if fs.exists("runtime/checkpoint.txt") then
 					fs.delete("runtime/checkpoint.txt")
 				end
+
 				global.err = nil
-				node:answer(msg, {"STALE_TASK_CLEARED", taskId})
+				node:answer(msg, {"STALE_TASK_CLEARED", taskId, true})
+
+				-- End any function which was already executing in main.lua.
+				-- The persistence was cleared above, so the reboot comes back clean.
+				sleep(0.2)
+				os.reboot()
 			else
 				node:answer(msg, {"STALE_TASK_CLEAR_REFUSED", taskId})
 			end
