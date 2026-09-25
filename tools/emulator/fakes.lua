@@ -61,6 +61,33 @@ function Group:getProgressText()
 	return (p and string.format("%3d%%", math.floor(p * 100))) or ""
 end
 
+function Group:getAssignedTurtles()
+	local list = {}
+	for i = 1, self.groupSize do
+		local id = 11 + i
+		list[id] = {
+			id = id,
+			state = {
+				-- every field TurtleControl reads: emptySlots fuelLevel id label
+				-- lastTask online pos progress stuck task taskLast time timeDiff
+				id = id, label = "DTX-00" .. i,
+				online = i <= self.activeTurtles,
+				task = (i <= self.activeTurtles) and "mineArea" or nil,
+				lastTask = "mineArea", taskLast = 0, stuck = false, time = 0,
+				fuelLevel = 12000 - i * 900,
+				pos = { x = i * 4, y = -59, z = i * 3 },
+				emptySlots = 16 - i, progress = i * 0.2, timeDiff = i * 1000,
+			},
+		}
+	end
+	return self.groupSize, list
+end
+function Group:addTaskToTurtles() end
+function Group:cancel() end
+function Group:delete() end
+function Group:reboot() end
+function Group:resume() end
+
 function Group:getAreaDetails()
 	local a = self.area
 	if not a then return end
@@ -154,7 +181,7 @@ function M.buildGlobal(say, scenarioName)
 		taskGroups = groups,
 		taskManager = taskManager,
 		node = nil,
-		map = nil,
+		map = nil,   -- screens that need one call M.buildMap()
 		storage = nil,
 	}
 	return g

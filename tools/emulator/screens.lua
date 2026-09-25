@@ -164,6 +164,33 @@ function screens.map(global, say)
 	return md
 end
 
+-- Group > details, as HostDisplay:openGroupDetails builds it.
+function screens.details(global, say)
+	local GroupDetails = require("classTaskGroupDetails")
+	local fakes = require("fakes")
+	global.map = global.map or fakes.buildMap()   -- the mini-map reads global.map
+	local w, h = term.getSize()
+
+	local groups = global.taskManager:getGroups()
+	local ids = {}
+	for id in pairs(groups) do ids[#ids+1] = id end
+	table.sort(ids)
+	local group = groups[ids[#ids]]      -- the started one
+
+	local d = GroupDetails:new(1, 1, group)
+	d:setSize(w, h)
+	if d.onResize then d:onResize() end
+	d:refresh()   -- otherwise the render shows initialize()'s placeholder values
+	say("details: group %s status=%s size=%dx%d", tostring(group.id),
+		group:getStatus(), d.width, d.height)
+	if d.winMap then
+		say("minimap: x %d..%d of %d, y %d..%d", d.winMap.x,
+			d.winMap.x + d.winMap.width - 1, d.width, d.winMap.y,
+			d.winMap.y + d.winMap.height - 1)
+	end
+	return d
+end
+
 function screens.names()
 	local n = {}
 	for k in pairs(screens) do
