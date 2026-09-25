@@ -6,7 +6,7 @@ if turtle then error("Run this on the main controller.",0) end
 local files = {
   {
     url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/patches/turtle-receive.lua",
-    marker="LABENHANCED_STALE_CHECKPOINT_RECOVERY",
+    marker="LABENHANCED_HARD_STALE_RESET",
     targets={"turtle/receive.lua"},
   },
   {
@@ -16,8 +16,13 @@ local files = {
   },
   {
     url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/clear-stale-active-tasks.lua",
-    marker="Cleared",
+    marker="LABENHANCED_HARD_STALE_RESET",
     targets={"clear-stale-active-tasks"},
+  },
+  {
+    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/force-clear-dtx-234.lua",
+    marker="HARD checkpoint reset",
+    targets={"force-clear-dtx-234"},
   },
 }
 
@@ -45,7 +50,7 @@ for _,entry in ipairs(files) do
   end
 end
 
-print("Stale checkpoint cancel fix installed.")
-print("Reboot controller, then reboot all DTX turtles once.")
-print("If the controller still shows ghost Active tasks, run:")
-print("clear-stale-active-tasks")
+print("Hard checkpoint recovery installed.")
+print("Reboot controller, then reboot DTX-002/003/004 once.")
+print("After they reconnect, run:")
+print("force-clear-dtx-234")
