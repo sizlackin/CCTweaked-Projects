@@ -307,10 +307,10 @@ local function drawModeToggle(cb)
 	local accent = cb.active and cb.accentColor or colors.gray
 	local textColor = cb.active and colors.white or colors.lightGray
 
-	-- Keep the colored state lamp completely outside the gray label plate.
-	-- This prevents the lamp from ever eating the first character of Select/Cursor.
+	-- Match MAP OPTIONS: colored status cell with a black center dot,
+	-- then a plain lowercase label on the gray plate.
 	cb.parent:drawFilledBox(cb.x, cb.y, cb.width, 1, bg)
-	cb.parent:drawText(cb.x, cb.y, " ", colors.black, accent)
+	cb.parent:drawText(cb.x, cb.y, "\149", colors.black, accent)
 	cb.parent:drawText(cb.x + 1, cb.y, cb.labelText, textColor, bg)
 end
 
@@ -345,7 +345,7 @@ function TaskGroupSelector:showModeControls()
 	local x = self.mapDisplay.btnLevelUp.x + self.mapDisplay.btnLevelUp.width + 1
 	local width = 8
 
-	self.btnSelectionMode = CheckBox:new(x, 1, "Select", not self.cursorMode, width, 1, colors.gray)
+	self.btnSelectionMode = CheckBox:new(x, 1, "select", not self.cursorMode, width, 1, colors.gray)
 	self.btnSelectionMode.accentColor = colors.green
 	self.btnSelectionMode.redraw = drawModeToggle
 	self.btnSelectionMode.handleClick = function() self.btnSelectionMode.click() end
@@ -354,7 +354,7 @@ function TaskGroupSelector:showModeControls()
 		return true
 	end
 
-	self.btnCursorMode = CheckBox:new(x, 2, "Cursor", self.cursorMode, width, 1, colors.gray)
+	self.btnCursorMode = CheckBox:new(x, 2, "cursor", self.cursorMode, width, 1, colors.gray)
 	self.btnCursorMode.accentColor = colors.cyan
 	self.btnCursorMode.redraw = drawModeToggle
 	self.btnCursorMode.handleClick = function() self.btnCursorMode.click() end
