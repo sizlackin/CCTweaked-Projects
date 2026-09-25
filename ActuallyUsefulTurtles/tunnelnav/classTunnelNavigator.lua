@@ -73,6 +73,7 @@ function Navigator:requestRoute(goal)
 	local data,err = self:_request("TUNNEL_ROUTE_REQUEST",{
 		start=posTable(self.miner.pos),
 		goal=posTable(goal),
+		intentTtl=60000, -- LABENHANCED_SMART_FRONTIER_SCORING
 	},4)
 	if not data then return nil,err end
 	if data[1] ~= "TUNNEL_ROUTE" then
@@ -125,6 +126,12 @@ function Navigator:requestNode(pos)
 	if data[1] == "TUNNEL_NODE" then return data[2] end
 	return nil,data[2] or data[1]
 end
+
+function Navigator:clearRouteIntent()
+	local data = self:_request("TUNNEL_ROUTE_INTENT_CLEAR",{},2)
+	return data and data[1] == "TUNNEL_ROUTE_INTENT_CLEARED"
+end
+
 
 function Navigator:requestStats()
 	local data,err = self:_request("TUNNEL_STATS_REQUEST",{},3)
@@ -272,6 +279,7 @@ function Navigator:navigateTo(goal,opts)
 				sleep(1)
 			else
 				print("NO VALID ROUTE",reason or "")
+				self:clearRouteIntent()
 				return false,reason,stats
 			end
 		else
@@ -280,6 +288,7 @@ function Navigator:navigateTo(goal,opts)
 				if self.miner.flushTunnelUpdatesSync then
 					self.miner:flushTunnelUpdatesSync()
 				end
+				self:clearRouteIntent()
 				return true
 			end
 			-- A failed step already updated the authoritative road graph.
@@ -289,6 +298,7 @@ function Navigator:navigateTo(goal,opts)
 	end
 
 	print("NO VALID ROUTE - REROUTE LIMIT")
+	self:clearRouteIntent()
 	return false,"reroute_limit"
 end
 
