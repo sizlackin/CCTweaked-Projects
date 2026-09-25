@@ -953,10 +953,86 @@ function MapDisplay:redraw() -- super override
 	end
 end
 
+function MapDisplay:isTerminalGroupStatus(status)
+	-- LABENHANCED_AREA_LIFECYCLE
+	return status == "completed"
+		or status == "cancelled"
+		or status == "deleted"
+end
+
+function MapDisplay:removeGroupArea(groupId)
+	if not groupId or not self.areas then return false end
+	local removed = false
+	for i=#self.areas,1,-1 do
+		local area = self.areas[i]
+		if area and area.groupId == groupId then
+			table.remove(self.areas,i)
+			removed = true
+		end
+	end
+	if removed then self.fullRedraw = true end
+	return removed
+end
+
+function MapDisplay:setGroupArea(group)
+	-- One live outline per group. Re-opening a group must not stack duplicate
+	-- rectangles on the map.
+	if not group or not group.id then return false end
+	self:removeGroupArea(group.id)
+
+	local status = group.getStatus and group:getStatus() or group.status
+	if self:isTerminalGroupStatus(status) then
+		return false
+	end
+
+	local start,finish = nil,nil
+	if group.getAreaDetails then
+		start,finish = group:getAreaDetails()
+	elseif group.getArea then
+		local a = group:getArea()
+		if a then start,finish = a.start,a.finish end
+	end
+	if not start or not finish then return false end
+
+	table.insert(self.areas,{
+		start=start,
+		finish=finish,
+		color=group.getStatusColor and group:getStatusColor() or colors.green,
+		groupId=group.id,
+	})
+	self.fullRedraw = true
+	return true
+end
+
 function MapDisplay:drawAreas()
 	local areas = self.areas
 	self.displayAreas = true -- testing
 	if areas and self.displayAreas then
+		-- LABENHANCED_AREA_LIFECYCLE
+		-- Group outlines are live UI state, not permanent map data. Remove them
+		-- automatically as soon as the group finishes, is cancelled, or is
+		-- deleted. Also refresh the outline color from current group status.
+		for i=#areas,1,-1 do
+			local area = areas[i]
+			if area and area.groupId then
+				local group = global.taskManager
+					and global.taskManager.groups
+					and global.taskManager.groups[area.groupId]
+				if not group then
+					table.remove(areas,i)
+					self.fullRedraw = true
+				else
+					local status = group.getStatus and group:getStatus() or group.status
+					if self:isTerminalGroupStatus(status) then
+						table.remove(areas,i)
+						self.fullRedraw = true
+					elseif group.getStatusColor then
+						area.color = group:getStatusColor()
+					end
+				end
+			end
+		end
+
 		for _,area in ipairs(areas) do
 			local start, finish, color = area.start, area.finish, area.color
 			if start and finish then
