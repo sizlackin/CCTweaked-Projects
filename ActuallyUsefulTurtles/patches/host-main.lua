@@ -419,15 +419,24 @@ node.onRequestAnswer = function(forMsg)
 		if not tunnelMap or not req.start or not req.goal then
 			node:answer(forMsg, {"TUNNEL_ROUTE_FAILED", "invalid_request"})
 		else
-			local path,reason,expanded = tunnelMap:findPath(req.start,req.goal,40000)
+			local path,reason,expanded = tunnelMap:findPath(
+				req.start,req.goal,40000,{claimant=sender}
+			)
 			local stats = tunnelMap:getStats()
 			if path then
+				-- LABENHANCED_SMART_FRONTIER_SCORING
+				-- Publish intended corridor so other turtles can choose routes
+				-- and frontiers which avoid unnecessary head-on traffic.
+				tunnelMap:setRouteIntent(
+					sender,path,req.goal,req.intentTtl or 60000,"navigation"
+				)
 				node:answer(forMsg, {"TUNNEL_ROUTE", {
 					path=path,
 					expanded=expanded,
 					stats=stats,
 				}})
 			else
+				tunnelMap:clearRouteIntent(sender)
 				if stats and stats.temporaryBlocks and stats.temporaryBlocks > 0
 				and (reason == "no_route" or reason == nil) then
 					reason = "no_route_temp"
@@ -474,6 +483,10 @@ node.onRequestAnswer = function(forMsg)
 			ok = tunnelMap:releaseFrontierClaim(req.source,req.dir,sender)
 		end
 		node:answer(forMsg, {"TUNNEL_FRONTIER_RELEASED", ok})
+
+	elseif txt == "TUNNEL_ROUTE_INTENT_CLEAR" then
+		if tunnelMap then tunnelMap:clearRouteIntent(sender) end
+		node:answer(forMsg, {"TUNNEL_ROUTE_INTENT_CLEARED", true})
 
 	elseif txt == "TUNNEL_NODE_REQUEST" then
 		local pos = data[2]
