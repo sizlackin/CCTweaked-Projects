@@ -303,20 +303,27 @@ end
 
 local function drawModeToggle(cb)
 	if not (cb.parent and cb.visible) then return end
-	local bg = cb.backgroundColor
 
-	-- Use the exact same 2-character SCADA lamp construction as MAP OPTIONS.
-	-- The lamp occupies x/x+1; the label starts at x+2, so the two can never overlap.
+	-- Keep the SCADA lamp on BLACK, exactly like MAP OPTIONS. Putting the
+	-- lamp's second teletext cell on the gray label plate was what made it
+	-- look clipped/attached to the plate edge.
+	local lampBg = colors.black
+	local plate = colors.gray
 	if cb.active then
-		cb.parent:drawText(cb.x, cb.y, "\136", colors.gray, cb.accentColor)
-		cb.parent:drawText(cb.x + 1, cb.y, "\149", cb.accentColor, bg)
+		cb.parent:drawText(cb.x, cb.y, "\136", plate, cb.accentColor)
+		cb.parent:drawText(cb.x + 1, cb.y, "\149", cb.accentColor, lampBg)
 	else
-		cb.parent:drawText(cb.x, cb.y, "\136", bg, colors.gray)
-		cb.parent:drawText(cb.x + 1, cb.y, "\149", colors.gray, bg)
+		cb.parent:drawText(cb.x, cb.y, "\136", lampBg, plate)
+		cb.parent:drawText(cb.x + 1, cb.y, "\149", plate, lampBg)
 	end
 
+	-- X/Z-style gray backing belongs only to the label. One trailing gray
+	-- cell keeps the floating control from looking cramped.
+	local labelPlateX = cb.x + 2
+	local labelPlateWidth = #cb.labelText + 1
+	cb.parent:drawFilledBox(labelPlateX, cb.y, labelPlateWidth, 1, plate)
 	local textColor = cb.active and colors.white or colors.lightGray
-	cb.parent:drawText(cb.x + 2, cb.y, cb.labelText, textColor, bg)
+	cb.parent:drawText(labelPlateX, cb.y, cb.labelText, textColor, plate)
 end
 
 function TaskGroupSelector:clearModeControls()
@@ -348,7 +355,7 @@ function TaskGroupSelector:showModeControls()
 
 	-- One black-cell gap after the yellow level + control.
 	local x = self.mapDisplay.btnLevelUp.x + self.mapDisplay.btnLevelUp.width + 1
-	local width = 8
+	local width = 9
 
 	self.btnSelectionMode = CheckBox:new(x, 1, "select", not self.cursorMode, width, 1, colors.gray)
 	self.btnSelectionMode.accentColor = colors.green
