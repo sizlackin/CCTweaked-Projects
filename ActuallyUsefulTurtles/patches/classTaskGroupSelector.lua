@@ -154,6 +154,10 @@ function TaskGroupSelector:centerIn(parent)
 	-- what. Unlink the page's button rather than just hiding it, because
 	-- BasicWindow:setVisible cascades to every child and would switch a hidden
 	-- one straight back on. Re-linked in close().
+	if self.hostDisplay and self.hostDisplay.setGroupsHeaderFocused then
+		self.hostDisplay:setGroupsHeaderFocused(false)
+	end
+
 	if parent and parent.btnClose and parent.removeObjectInternal then
 		self.closeOwner = parent
 		parent:removeObjectInternal(parent.btnClose)
@@ -239,15 +243,13 @@ function TaskGroupSelector:initialize()
 	self.btnSelectArea = Button:new("select area", L.padX, L.areaBtnRow, 14, 1, ui.control)
 	self.btnFromTop    = Button:new("top",    self.btnTopX, L.areaBtnRow, self.btnTopW, 1, ui.control)
 	self.btnToBottom   = Button:new("bottom", L.padX+21, L.areaBtnRow, 8, 1, ui.control)
-	self.btnSplitArea  = Button:new("split",  L.padX+30, L.areaBtnRow, 7, 1, ui.control)
-	for _,b in ipairs{self.btnSelectArea,self.btnFromTop,self.btnToBottom,self.btnSplitArea} do
+	for _,b in ipairs{self.btnSelectArea,self.btnFromTop,self.btnToBottom} do
 		b:setTextColor(ui.controlText)
 		self:addObject(b)
 	end
 	self.btnSelectArea.click = function() self:selectArea() end
 	self.btnFromTop.click    = function() self:setFromTop() end
 	self.btnToBottom.click   = function() self:setToBottom() end
-	self.btnSplitArea.click  = function() self:splitArea() end
 
 	-- ---- TASK -------------------------------------------------------------
 	self.lblTaskCap = Label:new("TASK", L.padX, L.taskCapRow, ui.caption)
@@ -436,6 +438,10 @@ function TaskGroupSelector:close()
 	self:closeTaskMenu()
 	self:clearAreaPreview()
 	self:discardDraftGroup()
+	if self.hostDisplay and self.hostDisplay.setGroupsHeaderFocused then
+		self.hostDisplay:setGroupsHeaderFocused(true)
+	end
+
 	if self.closeOwner and self.closeOwner.addObjectInternal then
 		self.closeOwner:addObjectInternal(self.closeOwner.btnClose)
 		self.closeOwner = nil

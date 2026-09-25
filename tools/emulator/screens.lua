@@ -77,6 +77,7 @@ function screens.groups(global, say)
 	end
 
 	win.visible = true
+	win.__host = host          -- so a modal preview can drive header focus
 	host:refreshGroupsHeader()
 	say("header: plate=%d btnAdd.x=%d lblAdd=%q lblSummary=%q btnClose.x=%s innerWin=%d",
 		win.boxHeader.width, win.btnAdd.x, win.lblAdd:getText(),
@@ -97,6 +98,7 @@ function screens.newgroup(global, say)
 	local page = screens.groups(global, say)
 
 	local sel = TaskGroupSelector:new(1, 1, global.taskManager, false)
+	sel:setHostDisplay(page.__host)   -- lets centerIn/close dim the page header
 	page:addObject(sel)
 	sel:centerIn(page)
 

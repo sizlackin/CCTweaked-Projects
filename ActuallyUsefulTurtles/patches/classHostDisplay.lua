@@ -259,13 +259,18 @@ function HostDisplay:initialize()
 	-- Header strip: a full-width plate carrying the page title on the left and
 	-- glanceable counts on the right, with create as a solid control. The plate
 	-- is registered first so the labels and the button draw over it.
-	self.winGroups.boxHeader = Box:new(1,1,self:getWidth(),1,colors.gray)
-	self.winGroups.lblName = Label:new("TASK GROUPS",2,1,colors.white,colors.gray)
-	self.winGroups.lblSummary = Label:new("",14,1,colors.white,colors.gray)
+	-- LABENHANCED_GROUPS_HMI
+	-- The header tracks focus: lightGray chrome while this page is the top layer,
+	-- gray once a modal covers it. Two stacked pages then read as stacked rather
+	-- than as one flat surface.
+	self.winGroups.headerFocused = true
+	self.winGroups.boxHeader = Box:new(1,1,self:getWidth(),1,colors.lightGray)
+	self.winGroups.lblName = Label:new("TASK GROUPS",2,1,colors.black,colors.lightGray)
+	self.winGroups.lblSummary = Label:new("",14,1,colors.black,colors.lightGray)
 	-- Caption plus glyph control, the same pairing the map screen uses for its
 	-- level and zoom spinners: a dimmed caption naming the action and a solid
 	-- button carrying the glyph. Green reads as create against the red close.
-	self.winGroups.lblAdd = Label:new("create",14,1,colors.lightGray,colors.gray)
+	self.winGroups.lblAdd = Label:new("create",14,1,colors.gray,colors.lightGray)
 	self.winGroups.btnAdd = Button:new("+",21,1,3,1,colors.green)
 	self.winGroups.btnAdd:setTextColor(colors.black)
 	self.winGroups.taskGroupControls = {}
@@ -489,6 +494,14 @@ function HostDisplay:addGroup()
 	return true
 end
 
+function HostDisplay:setGroupsHeaderFocused(focused)
+	-- LABENHANCED_GROUPS_HMI
+	-- Called by a modal as it opens and closes, so the page behind dims.
+	if not self.winGroups then return end
+	self.winGroups.headerFocused = focused and true or false
+	self:refreshGroupsHeader()
+end
+
 function HostDisplay:refreshGroupsHeader()
 	-- LABENHANCED_GROUPS_HMI
 	-- Keep the header plate spanning the window and show how many groups exist
@@ -515,8 +528,17 @@ function HostDisplay:refreshGroupsHeader()
 	end
 	usable = math.max(titleEnd, usable)
 
+	-- repaint for the current focus state
+	local focused = win.headerFocused ~= false
+	local bg = focused and colors.lightGray or colors.gray
+	local fg = focused and colors.black or colors.white
+	local dim = focused and colors.gray or colors.lightGray
 	win.boxHeader:setWidth(usable)
-	win.boxHeader:setBorderColor(colors.gray)
+	win.boxHeader:setBackgroundColor(bg)
+	win.boxHeader:setBorderColor(bg)
+	win.lblName:setTextColor(fg); win.lblName:setBackgroundColor(bg)
+	win.lblSummary:setTextColor(fg); win.lblSummary:setBackgroundColor(bg)
+	win.lblAdd:setTextColor(dim); win.lblAdd:setBackgroundColor(bg)
 
 	local total, active = 0, 0
 	for _,group in pairs(self.taskManager:getGroups()) do
