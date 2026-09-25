@@ -81,6 +81,10 @@ function Mapper:handleTraffic(frontier,target,dir,trafficHits)
 	local cooldown = math.min(3500 + (hits-1)*3000,15000)
 	nav:deferTrafficEdge(from,dir,cooldown)
 	nav:releaseFrontier(frontier)
+	self.trafficWaitUntil = math.max(
+		self.trafficWaitUntil or 0,
+		os.epoch("utc") + cooldown
+	)
 	print("TRAFFIC STALLED - TRYING NEXT BEST BRANCH")
 	return false,"traffic_reroute",name
 end
@@ -333,10 +337,20 @@ function Mapper:mapNetwork(radius,maxCells)
 			elseif reason == "no_frontier" then
 				-- Another mapper can briefly consume a frontier before it has
 				-- surveyed the next cell and published the next frontier.
-				-- Require a stable no-work result before declaring completion.
-				if stats and stats.claimedFrontiers and stats.claimedFrontiers > 0 then
+				-- Traffic can also temporarily split the road graph. Never call
+				-- mapping complete while our traffic avoidance window is active.
+				local trafficWaiting = self.trafficWaitUntil
+					and os.epoch("utc") < self.trafficWaitUntil
+				if trafficWaiting then
 					noFrontierConfirmations = 0
-					print("WAITING FOR OTHER MAPPERS TO EXPOSE NEW FRONTIERS")
+					print("WAITING FOR TRAFFIC WINDOW TO CLEAR")
+					sleep(1)
+				elseif stats and (
+					(stats.claimedFrontiers and stats.claimedFrontiers > 0)
+					or (stats.temporaryBlocks and stats.temporaryBlocks > 0)
+				) then
+					noFrontierConfirmations = 0
+					print("WAITING FOR OTHER MAPPERS / TEMPORARY TRAFFIC")
 					sleep(1)
 				else
 					noFrontierConfirmations = noFrontierConfirmations + 1
