@@ -4,7 +4,7 @@
 
 if turtle then error("Run this on the main controller.",0) end
 
-local url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/5e277430bd43a914dd8058fadb591af1c570fa8b/ActuallyUsefulTurtles/patches/classMiner.lua"
+local url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/b787f9e1e40c1cd6660729a8bddf728409464994/ActuallyUsefulTurtles/patches/classMiner.lua"
 local r,e=http.get(url)
 if not r then error("Download failed: "..tostring(e),0) end
 local code=r.getResponseCode()
