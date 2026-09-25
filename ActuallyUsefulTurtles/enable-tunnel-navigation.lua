@@ -20,8 +20,8 @@ local files = {
 		targets={"turtle/classTunnelMapper.lua"},
 	},
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/5e277430bd43a914dd8058fadb591af1c570fa8b/ActuallyUsefulTurtles/patches/classMiner.lua",
-		marker="LABENHANCED_MINING_ROUTE_BRIDGE",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/b787f9e1e40c1cd6660729a8bddf728409464994/ActuallyUsefulTurtles/patches/classMiner.lua",
+		marker="LABENHANCED_SHARED_ACCESS_POS_FIX",
 		targets={"turtle/classMiner.lua"},
 	},
 	{
