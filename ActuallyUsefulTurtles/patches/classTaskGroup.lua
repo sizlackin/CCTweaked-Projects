@@ -514,45 +514,62 @@ function TaskGroup:assignAreas(areas)
 		-- Detect whether the long stripes are arranged west/east or north/south.
 		local stripesAlongX = areas[1].finish.x < areas[#areas].start.x
 		local entries = {}
+		local edgeZ, edgeX
 
 		if stripesAlongX then
-			-- Stripes span Z. Enter from whichever Z edge is closer to the
-			-- first available turtle, then distribute along X.
-			local edgeZ = minZ
+			-- Stripes span Z. The shared access spine runs across X on the
+			-- nearest Z edge of the selected area.
+			edgeZ = minZ
 			if leaderPos and math.abs(leaderPos.z-maxZ) < math.abs(leaderPos.z-minZ) then
 				edgeZ = maxZ
 			end
-			for i,area in ipairs(areas) do
-				local x = math.floor((area.start.x + area.finish.x) / 2)
-				entries[i] = vector.new(x,minY,edgeZ)
-			end
 		else
-			-- Stripes span X. Enter from whichever X edge is closer, then
-			-- distribute along Z.
-			local edgeX = minX
+			-- Stripes span X. The shared access spine runs across Z on the
+			-- nearest X edge of the selected area.
+			edgeX = minX
 			if leaderPos and math.abs(leaderPos.x-maxX) < math.abs(leaderPos.x-minX) then
 				edgeX = maxX
 			end
-			for i,area in ipairs(areas) do
-				local z = math.floor((area.start.z + area.finish.z) / 2)
-				entries[i] = vector.new(edgeX,minY,z)
-			end
 		end
 
-		-- Put the leader on whichever END stripe is closer to home. This makes
-		-- the internal access spine a single straight run across the stripe ends.
-		local first, last = entries[1], entries[#entries]
-		if leaderPos and first and last then
-			local dFirst = math.abs(leaderPos.x-first.x)+math.abs(leaderPos.y-first.y)+math.abs(leaderPos.z-first.z)
-			local dLast = math.abs(leaderPos.x-last.x)+math.abs(leaderPos.y-last.y)+math.abs(leaderPos.z-last.z)
-			if dLast < dFirst then
-				local reversedAreas, reversedEntries = {}, {}
-				for i=#areas,1,-1 do
-					table.insert(reversedAreas,areas[i])
-					table.insert(reversedEntries,entries[i])
-				end
-				areas = reversedAreas
-				entries = reversedEntries
+		-- LABENHANCED_SHARED_STRIPE_CORNERS
+		-- Every turtle starts mining DIRECTLY from a corner on the shared spine.
+		-- No turtle gets a private connector from the spine to the middle/corner
+		-- of its stripe. Pick the end of the stripe set nearest the leader, then
+		-- give every stripe a collinear corner entry on that same shared spine.
+		local lowCandidate, highCandidate
+		if stripesAlongX then
+			lowCandidate = vector.new(math.min(areas[1].start.x,areas[1].finish.x),minY,edgeZ)
+			highCandidate = vector.new(math.max(areas[#areas].start.x,areas[#areas].finish.x),minY,edgeZ)
+		else
+			lowCandidate = vector.new(edgeX,minY,math.min(areas[1].start.z,areas[1].finish.z))
+			highCandidate = vector.new(edgeX,minY,math.max(areas[#areas].start.z,areas[#areas].finish.z))
+		end
+
+		local reverse = false
+		if leaderPos and lowCandidate and highCandidate then
+			local dLow = math.abs(leaderPos.x-lowCandidate.x)+math.abs(leaderPos.y-lowCandidate.y)+math.abs(leaderPos.z-lowCandidate.z)
+			local dHigh = math.abs(leaderPos.x-highCandidate.x)+math.abs(leaderPos.y-highCandidate.y)+math.abs(leaderPos.z-highCandidate.z)
+			reverse = dHigh < dLow
+		end
+
+		if reverse then
+			local reversedAreas = {}
+			for i=#areas,1,-1 do table.insert(reversedAreas,areas[i]) end
+			areas = reversedAreas
+		end
+
+		for i,area in ipairs(areas) do
+			if stripesAlongX then
+				local x = reverse
+					and math.max(area.start.x,area.finish.x)
+					or math.min(area.start.x,area.finish.x)
+				entries[i] = vector.new(x,minY,edgeZ)
+			else
+				local z = reverse
+					and math.max(area.start.z,area.finish.z)
+					or math.min(area.start.z,area.finish.z)
+				entries[i] = vector.new(edgeX,minY,z)
 			end
 		end
 
