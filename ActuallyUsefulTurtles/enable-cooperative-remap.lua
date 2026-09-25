@@ -17,7 +17,7 @@ local files = {
     targets={"host/main.lua","runtime/main.lua"},
   },
   {
-    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/da657c4ce1cc6efd94baa725972b7e095e04ace4/ActuallyUsefulTurtles/tunnelnav/classTunnelNavigator.lua",
+    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/f973cdf91b337231b8b9c9d2c2a3dae4333def25/ActuallyUsefulTurtles/tunnelnav/classTunnelNavigator.lua",
     marker="LABENHANCED_MULTI_MAPPER_CLAIMS",
     targets={"turtle/classTunnelNavigator.lua"},
   },
@@ -27,7 +27,7 @@ local files = {
     targets={"turtle/classMiner.lua"},
   },
   {
-    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/4e19fb91120b1dc27b89066148a0933bf67900fe/ActuallyUsefulTurtles/tunnelnav/classTunnelMapper.lua",
+    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/7b92c1d00c8773e76904daccf2defc3477bee622/ActuallyUsefulTurtles/tunnelnav/classTunnelMapper.lua",
     marker="LABENHANCED_MULTI_MAPPER_CLAIMS",
     targets={"turtle/classTunnelMapper.lua"},
   },
