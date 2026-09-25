@@ -3035,6 +3035,45 @@ function Miner:reachSharedMineEntrance(sharedEntry, sharedEnd, accessEntry, isLe
 	end
 end
 
+-- LABENHANCED_FAR_EDGE_SPINE
+-- Close the "open comb" at the far end of a mining stripe. stripMine already
+-- creates parallel rows and short 3-block turns; this adds one continuous 1x2
+-- spine along the opposite edge so every row endpoint is tied into the same
+-- tunnel network. It stays inside this turtle's assigned stripe.
+function Miner:connectMiningFarEdge(startPos,finishPos,orientation)
+	if not startPos or not finishPos or orientation == nil then return false end
+
+	local y = startPos.y
+	local edgeStart,edgeEnd
+
+	if orientation % 2 == 0 then
+		-- Mining rows run north/south (Z). Join them across X at the far Z edge.
+		edgeStart = vector.new(startPos.x,y,finishPos.z)
+		edgeEnd = vector.new(finishPos.x,y,finishPos.z)
+	else
+		-- Mining rows run east/west (X). Join them across Z at the far X edge.
+		edgeStart = vector.new(finishPos.x,y,startPos.z)
+		edgeEnd = vector.new(finishPos.x,y,finishPos.z)
+	end
+
+	if sameAccessPos(edgeStart,edgeEnd) then return true end
+
+	-- The first point is the end of the first mining row, so it should already
+	-- be open. Travel there through known tunnels only; never cut a shortcut.
+	local reached = self:navigateOpenPathToPos(edgeStart.x,edgeStart.y,edgeStart.z)
+	if not reached then
+		print("FAR EDGE SPINE: NO OPEN ROUTE TO START - SKIPPING")
+		return false
+	end
+
+	print("CONNECTING FAR EDGE TUNNEL SPINE")
+	local ok = self:digNeatAccessTunnelTo(edgeEnd)
+	if ok and self.flushTunnelUpdatesSync then
+		self:flushTunnelUpdatesSync()
+	end
+	return ok
+end
+
 function Miner:mineArea(start, finish) 
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name}, true)
 	-- mine area within start and finish pos
@@ -3222,6 +3261,17 @@ function Miner:mineArea(start, finish)
 			self.checkPointer:save(self)
 
 			self:stripMine(rowLength, rows, levels)
+
+			-- LABENHANCED_FAR_EDGE_SPINE
+			-- Turn the striped "comb" into one connected tunnel network at the
+			-- far end as well. Each turtle only connects the far edge of its own
+			-- assigned stripe; adjacent stripes meet naturally into one spine.
+			if levels == 1 or levels == -1 then
+				self:connectMiningFarEdge(start,finish,orientation)
+			else
+				print("FAR EDGE SPINE: MULTI-LEVEL JOB - CONNECTING BASE LEVEL ONLY")
+				self:connectMiningFarEdge(start,finish,orientation)
+			end
 			
 		end
 	end
