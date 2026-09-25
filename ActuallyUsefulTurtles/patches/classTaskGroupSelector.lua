@@ -341,9 +341,9 @@ function TaskGroupSelector:showModeControls()
 
 	-- One black-cell gap after the yellow level + control.
 	local x = self.mapDisplay.btnLevelUp.x + self.mapDisplay.btnLevelUp.width + 1
-	local width = 16
+	local width = 10
 
-	self.btnSelectionMode = CheckBox:new(x, 1, "Selection mode", not self.cursorMode, width, 1, colors.gray)
+	self.btnSelectionMode = CheckBox:new(x, 1, "SELECT", not self.cursorMode, width, 1, colors.gray)
 	self.btnSelectionMode.accentColor = colors.green
 	self.btnSelectionMode.redraw = drawModeToggle
 	self.btnSelectionMode.click = function()
@@ -351,7 +351,7 @@ function TaskGroupSelector:showModeControls()
 		return true
 	end
 
-	self.btnCursorMode = CheckBox:new(x, 2, "Cursor mode", self.cursorMode, width, 1, colors.gray)
+	self.btnCursorMode = CheckBox:new(x, 2, "CURSOR", self.cursorMode, width, 1, colors.gray)
 	self.btnCursorMode.accentColor = colors.cyan
 	self.btnCursorMode.redraw = drawModeToggle
 	self.btnCursorMode.click = function()
