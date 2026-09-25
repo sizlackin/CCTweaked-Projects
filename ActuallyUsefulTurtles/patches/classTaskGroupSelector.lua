@@ -154,11 +154,13 @@ function TaskGroupSelector:centerIn(parent)
 	-- what. Unlink the page's button rather than just hiding it, because
 	-- BasicWindow:setVisible cascades to every child and would switch a hidden
 	-- one straight back on. Re-linked in close().
-	if self.hostDisplay and self.hostDisplay.setGroupsHeaderFocused then
-		self.hostDisplay:setGroupsHeaderFocused(false)
-	end
-
-	if parent and parent.btnClose and parent.removeObjectInternal then
+	-- Guarded: List:remove does not clear a node's _prev/_next (they are cleared
+	-- on add), so removing the same node twice corrupts the list and the next
+	-- remove dies with "not first". Two selectors opened in quick succession
+	-- would otherwise both unlink the same close button.
+	if parent and parent.btnClose and parent.removeObjectInternal
+	and not parent.closeButtonSuppressed then
+		parent.closeButtonSuppressed = true
 		self.closeOwner = parent
 		parent:removeObjectInternal(parent.btnClose)
 	end
@@ -435,14 +437,16 @@ function TaskGroupSelector:startTasks()
 end
 
 function TaskGroupSelector:close()
+	-- Idempotent. BasicWindow:close does not clear self.parent, so a second call
+	-- would remove this window from the parent list a second time and corrupt it.
+	if self.closed then return true end
+	self.closed = true
+
 	self:closeTaskMenu()
 	self:clearAreaPreview()
 	self:discardDraftGroup()
-	if self.hostDisplay and self.hostDisplay.setGroupsHeaderFocused then
-		self.hostDisplay:setGroupsHeaderFocused(true)
-	end
-
 	if self.closeOwner and self.closeOwner.addObjectInternal then
+		self.closeOwner.closeButtonSuppressed = false
 		self.closeOwner:addObjectInternal(self.closeOwner.btnClose)
 		self.closeOwner = nil
 	end

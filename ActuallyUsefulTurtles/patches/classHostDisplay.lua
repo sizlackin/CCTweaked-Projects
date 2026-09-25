@@ -260,17 +260,17 @@ function HostDisplay:initialize()
 	-- glanceable counts on the right, with create as a solid control. The plate
 	-- is registered first so the labels and the button draw over it.
 	-- LABENHANCED_GROUPS_HMI
-	-- The header tracks focus: lightGray chrome while this page is the top layer,
-	-- gray once a modal covers it. Two stacked pages then read as stacked rather
-	-- than as one flat surface.
-	self.winGroups.headerFocused = true
-	self.winGroups.boxHeader = Box:new(1,1,self:getWidth(),1,colors.lightGray)
-	self.winGroups.lblName = Label:new("TASK GROUPS",2,1,colors.black,colors.lightGray)
-	self.winGroups.lblSummary = Label:new("",14,1,colors.black,colors.lightGray)
+	-- Deliberately stays gray. The modal already signals focus by carrying
+	-- brighter chrome than anything it covers; dimming the page as well is
+	-- redundant, and a lightGray bar here became the loudest thing on screen,
+	-- competing with the status lamps that should be carrying the eye.
+	self.winGroups.boxHeader = Box:new(1,1,self:getWidth(),1,colors.gray)
+	self.winGroups.lblName = Label:new("TASK GROUPS",2,1,colors.white,colors.gray)
+	self.winGroups.lblSummary = Label:new("",14,1,colors.white,colors.gray)
 	-- Caption plus glyph control, the same pairing the map screen uses for its
 	-- level and zoom spinners: a dimmed caption naming the action and a solid
 	-- button carrying the glyph. Green reads as create against the red close.
-	self.winGroups.lblAdd = Label:new("create",14,1,colors.gray,colors.lightGray)
+	self.winGroups.lblAdd = Label:new("create",14,1,colors.lightGray,colors.gray)
 	self.winGroups.btnAdd = Button:new("+",21,1,3,1,colors.green)
 	self.winGroups.btnAdd:setTextColor(colors.black)
 	self.winGroups.taskGroupControls = {}
@@ -485,6 +485,15 @@ function HostDisplay:displayGroups()
 	return true
 end
 function HostDisplay:addGroup()
+	-- LABENHANCED_NEWGROUP_HMI
+	-- One dialog at a time. Pressing create twice in quick succession used to
+	-- build a second selector over the first; both then unlinked the same page
+	-- close button and the object list corrupted.
+	local existing = self.winGroups.groupSelector
+	if existing and not existing.closed then
+		return true
+	end
+
 	self.winGroups.groupSelector = TaskGroupSelector:new(1,1,self.taskManager, self.doSlowStart)
 	self.winGroups.groupSelector:setHostDisplay(self)
 	self.winGroups:addObject(self.winGroups.groupSelector)
@@ -492,14 +501,6 @@ function HostDisplay:addGroup()
 	self.winGroups.groupSelector:centerIn(self.winGroups)
 	self:redraw()
 	return true
-end
-
-function HostDisplay:setGroupsHeaderFocused(focused)
-	-- LABENHANCED_GROUPS_HMI
-	-- Called by a modal as it opens and closes, so the page behind dims.
-	if not self.winGroups then return end
-	self.winGroups.headerFocused = focused and true or false
-	self:refreshGroupsHeader()
 end
 
 function HostDisplay:refreshGroupsHeader()
@@ -528,17 +529,8 @@ function HostDisplay:refreshGroupsHeader()
 	end
 	usable = math.max(titleEnd, usable)
 
-	-- repaint for the current focus state
-	local focused = win.headerFocused ~= false
-	local bg = focused and colors.lightGray or colors.gray
-	local fg = focused and colors.black or colors.white
-	local dim = focused and colors.gray or colors.lightGray
 	win.boxHeader:setWidth(usable)
-	win.boxHeader:setBackgroundColor(bg)
-	win.boxHeader:setBorderColor(bg)
-	win.lblName:setTextColor(fg); win.lblName:setBackgroundColor(bg)
-	win.lblSummary:setTextColor(fg); win.lblSummary:setBackgroundColor(bg)
-	win.lblAdd:setTextColor(dim); win.lblAdd:setBackgroundColor(bg)
+	win.boxHeader:setBorderColor(colors.gray)
 
 	local total, active = 0, 0
 	for _,group in pairs(self.taskManager:getGroups()) do
