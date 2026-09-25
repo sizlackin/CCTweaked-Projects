@@ -1133,10 +1133,15 @@ function MapDisplay:redrawSelectionOutline()
 	for _,area in ipairs(self.areas) do
 		if (area.selectionOutline or area.preciseOutline)
 		and area.start and area.finish then
-			local sx,sy = self:transformSubPos(area.start)
-			local ex,ey = self:transformSubPos(area.finish)
-			if sx > ex then sx,ex = ex,sx end
-			if sy > ey then sy,ey = ey,sy end
+			-- LABENHANCED_PRECISE_SELECTION_OUTLINE
+			-- transformSubPos returns the pixel CONTAINING a block, and a pixel is
+			-- zoomLevel blocks wide. Outlining those pixels therefore paints blocks
+			-- outside the selection once zoomed out - at 1:4 the line covered two
+			-- blocks past each edge that are never mined, which is why the outline
+			-- did not match the dug result. Use only pixels lying WHOLLY inside the
+			-- selection, so every block under the red line really is dug.
+			local sx,ex = self:insidePixelRange(area.start.x,area.finish.x,self.mapX)
+			local sy,ey = self:insidePixelRange(area.start.z,area.finish.z,self.mapZ)
 
 			local cells = {}
 			for x=sx,ex do
@@ -1251,6 +1256,23 @@ function MapDisplay:redrawOverlay()
 			end
 		end
 	end
+end
+
+-- LABENHANCED_PRECISE_SELECTION_OUTLINE
+-- Pixel p covers blocks [(p-1)*zoom + origin, p*zoom - 1 + origin]. Return the
+-- first and last pixel lying entirely within [lo,hi]. If the span is narrower
+-- than one pixel there is no such pixel, so fall back to the containing ones
+-- rather than drawing nothing.
+function MapDisplay:insidePixelRange(a,b,origin)
+	local lo,hi = math.min(a,b),math.max(a,b)
+	local zoom = self.zoomLevel
+	local first = math.ceil((lo - origin) / zoom) + 1
+	local last = math.floor((hi - origin + 1) / zoom)
+	if first > last then
+		first = math.floor((lo - origin) / zoom) + 1
+		last = math.floor((hi - origin) / zoom) + 1
+	end
+	return first,last
 end
 
 function MapDisplay:transformSubPos(pos)

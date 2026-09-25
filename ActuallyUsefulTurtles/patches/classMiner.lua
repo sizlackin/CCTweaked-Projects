@@ -2245,6 +2245,27 @@ end
 -- one-wide floor lane before the navigator considers the route jammed.
 function Miner:yieldForTurtleTraffic(waitSeconds)
 	waitSeconds = tonumber(waitSeconds) or 4
+
+	-- LABENHANCED_TRAFFIC_TIEBREAK
+	-- Two turtles meeting head-on both reach this at the same instant, so both
+	-- climb into the headspace, both then see a clear floor, and both drop back
+	-- down facing each other again. Nothing broke the symmetry, so the pair
+	-- livelocked until navigateTo's 8-hit / 20s limit made one ABANDON its route.
+	--
+	-- Stagger the decision by computer id so exactly one side climbs first; the
+	-- other finds the way clear and simply drives past. ids 12/14/15/16 map to
+	-- four distinct slots (0.4 / 0.8 / 0.0 / 0.2s). The jitter covers ids that
+	-- happen to share a slot.
+	local slot = (os.getComputerID() % 5) * 0.2
+	if slot > 0 then sleep(slot) end
+	sleep(math.random() * 0.15)
+
+	-- The other side may have yielded during that pause. If the way is clear,
+	-- do not climb at all - let the caller retry the move.
+	if not turtle.inspect() then
+		return false,"cleared"
+	end
+
 	local hasUp = turtle.inspectUp()
 	if hasUp then
 		return false,"no_headspace"
