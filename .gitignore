@@ -46,3 +46,6 @@ nohup.out
 __pycache__/
 *.py[cod]
 .venv/
+
+# Emulator scratch: rendered screenshots and the throwaway CraftOS-PC data dir
+tools/emulator/out/

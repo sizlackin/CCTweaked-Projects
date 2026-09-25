@@ -22,6 +22,11 @@ local default = {
 		caption = colors.lightGray,
 		value = colors.white,
 		divider = colors.gray,
+		-- Controls need their own tier. Button defaults to colors.gray, the same
+		-- gray as the plates, so map/opts/detail read as text on a slab instead
+		-- of as controls. Lighter block + dark glyph, per the map screen.
+		control = colors.lightGray,
+		controlText = colors.black,
 	},
 	width = 50,
 	height = 7,
@@ -37,10 +42,16 @@ local layout = {
 	dataTop    = 3,                -- data occupies rows 3..5
 	dataRows   = 3,
 	coordX     = 4,  coordW = 16,  -- X/Y/Z plate
+	coordTop   = 2,  coordRows = 4, -- plate includes its FROM/TO caption row
 	axisX      = 5,
 	startEnd   = 12,               -- start value is right-aligned to here
 	finishEnd  = 18,               -- finish value is right-aligned to here
 	btnX       = 21, btnW  = 6,
+	-- Row-header items sit right of the coordinate plate so the plate can own
+	-- its caption row without colliding with the id and status.
+	idX        = 21,
+	lampX      = 26,
+	statusX    = 28,
 	infoX      = 29,               -- key/value block
 	infoPad    = 1,
 	dividerRow = 6,
@@ -56,6 +67,16 @@ local function statusText(status)
 	if not status then return "UNKNOWN" end
 	local text = tostring(status):upper():gsub("_", " ")
 	text = text:gsub("^PARTIALLY ", "PART ")
+	return text
+end
+
+-- Clip a value to the space its plate actually has. taskName is free text
+-- from whoever created the group, so without this a long one runs off the
+-- plate, past the row and over the scrollbar.
+local function fitText(text, width)
+	text = tostring(text)
+	if width < 1 then return "" end
+	if #text > width then return text:sub(1, width) end
 	return text
 end
 
@@ -232,7 +253,14 @@ function TaskGroupControl:redraw() -- super override
 	local uptime = self.lblTime and self.lblTime:getText() or ""
 	if #uptime > 0 then
 		local ux = rightEdge - #uptime + 1
-		if ux > layout.infoX then
+		-- Only draw the uptime when it clears the status text with a gap. The
+		-- old guard only checked infoX, so at narrow widths a long status ran
+		-- straight into it (PART RESUMED123:45.67).
+		local statusEnd = layout.statusX - 1
+		if self.lblStatus then
+			statusEnd = layout.statusX + #self.lblStatus:getText() - 1
+		end
+		if ux > statusEnd + 1 then
 			self:drawText(ux, layout.headerRow, uptime, c.caption, self.backgroundColor)
 		end
 	end
@@ -253,8 +281,8 @@ function TaskGroupControl:initialize()
 	self.boxStrip:setBorderColor(self.statusColor or c.neutral)
 
 	-- plates behind the two data groups
-	self.boxCoords = Box:new(layout.coordX, layout.dataTop, layout.coordW,
-		layout.dataRows, c.plate)
+	self.boxCoords = Box:new(layout.coordX, layout.coordTop, layout.coordW,
+		layout.coordRows, c.plate)
 	self.boxInfo = Box:new(layout.infoX, layout.dataTop,
 		math.max(1, self.width - layout.rightGutter - layout.infoX + 1),
 		layout.dataRows, c.plate)
@@ -264,12 +292,12 @@ function TaskGroupControl:initialize()
 	self:addObject(self.boxInfo)
 
 	-- header line: id, status lamp + text, uptime
-	self.lblId = Label:new(string.sub(tostring(group.id),1,4), layout.coordX,
+	self.lblId = Label:new(string.sub(tostring(group.id),1,4), layout.idX,
 		layout.headerRow, c.value)
-	self.boxLamp = Box:new(layout.axisX + 5, layout.headerRow, 1, 1,
+	self.boxLamp = Box:new(layout.lampX, layout.headerRow, 1, 1,
 		self.statusColor or c.neutral)
 	self.boxLamp:setBorderColor(self.statusColor or c.neutral)
-	self.lblStatus = Label:new(statusText(group.status), layout.axisX + 7,
+	self.lblStatus = Label:new(statusText(group.status), layout.statusX,
 		layout.headerRow, self.statusColor)
 	-- Holds the uptime text only; redraw() paints it right-aligned, so it is
 	-- deliberately not registered as a drawn child.
@@ -278,6 +306,16 @@ function TaskGroupControl:initialize()
 	self:addObject(self.lblId)
 	self:addObject(self.boxLamp)
 	self:addObject(self.lblStatus)
+
+	-- Column captions, right-aligned to the same field edges as the values below
+	-- so caption and number share a right margin. Without these the two number
+	-- columns are unlabelled and you cannot tell the area's start from its end.
+	self.lblFromCap = Label:new("FROM", layout.startEnd - 3, layout.coordTop,
+		c.caption, c.plate)
+	self.lblToCap = Label:new("TO", layout.finishEnd - 1, layout.coordTop,
+		c.caption, c.plate)
+	self:addObject(self.lblFromCap)
+	self:addObject(self.lblToCap)
 
 	-- coordinate plate: axis caption, start and finish right-aligned so the
 	-- digits do not jump around as a group is edited
@@ -322,9 +360,12 @@ function TaskGroupControl:initialize()
 	self:addObject(self.lblProgress)
 
 	-- controls, unchanged geometry
-	self.btnMap = Button:new("map", layout.btnX, layout.dataTop, layout.btnW, 1)
-	self.btnOptions = Button:new("opts", layout.btnX, layout.dataTop+1, layout.btnW, 1)
-	self.btnDetails = Button:new("detail", layout.btnX, layout.dataTop+2, layout.btnW, 1)
+	self.btnMap = Button:new("map", layout.btnX, layout.dataTop, layout.btnW, 1, c.control)
+	self.btnOptions = Button:new("opts", layout.btnX, layout.dataTop+1, layout.btnW, 1, c.control)
+	self.btnDetails = Button:new("detail", layout.btnX, layout.dataTop+2, layout.btnW, 1, c.control)
+	self.btnMap:setTextColor(c.controlText)
+	self.btnOptions:setTextColor(c.controlText)
+	self.btnDetails:setTextColor(c.controlText)
 
 	self.btnMap.click = function() self:openMap() end
 	self.btnOptions.click = function() return self:openOptions() end
@@ -353,11 +394,18 @@ function TaskGroupControl:refreshPos()
 	self.lblZFinish:setText(padLeft(finish.z, finishW))
 end
 
+function TaskGroupControl:infoValueWidth()
+	-- from the value column to the inner edge of the right-hand plate
+	local valueX = layout.infoX + layout.infoPad + 5
+	return (self.width - layout.rightGutter) - valueX + 1
+end
+
 function TaskGroupControl:refresh()
 	self:refreshPos()
 
 	local group = self.taskGroup
-	self.lblTask:setText(group.taskName or "no task")
+	local valueW = self:infoValueWidth()
+	self.lblTask:setText(fitText(group.taskName or "no task", valueW))
 
 	local status = group:getStatus()
 	local activeCount = group:getActiveTurtles()
@@ -380,8 +428,9 @@ function TaskGroupControl:refresh()
 	end
 
 	self.lblId:setText(string.sub(tostring(group.id),1,4))
-	self.lblActiveTurtles:setText(activeCount.."/"..tostring(group.groupSize))
-	self.lblProgress:setText(group:getProgressText())
+	self.lblActiveTurtles:setText(
+		fitText(activeCount.."/"..tostring(group.groupSize), valueW))
+	self.lblProgress:setText(fitText(group:getProgressText(), valueW))
 
 	self.lblTime:setText(group:getUptimeText())
 end

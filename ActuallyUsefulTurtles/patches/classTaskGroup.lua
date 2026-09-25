@@ -177,7 +177,14 @@ function TaskGroup:getProgress()
 	end
 	if isTrackable then 
 		if totalVolume > 0 then
-			return accumulatedProgress / totalVolume
+			-- LABENHANCED_PROGRESS_CLAMP
+			-- Turtles report their own progress, so a turtle still running older
+			-- code can send a value above 1. Bound it here too rather than
+			-- trusting the wire.
+			local weighted = accumulatedProgress / totalVolume
+			if weighted > 1 then weighted = 1 end
+			if weighted < 0 then weighted = 0 end
+			return weighted
 		else
 			return 0
 		end

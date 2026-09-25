@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Render an Actually Useful Turtles screen in CraftOS-PC and save a screenshot.
+#
+#   ./tools/emulate                      groups page, 57x38 (advanced monitor)
+#   ./tools/emulate groups               same, explicit
+#   ./tools/emulate full                 the whole HostDisplay
+#   ./tools/emulate groups --scenario stress
+#   ./tools/emulate groups --size 51x19  computer terminal
+#   ./tools/emulate groups --size 26x20  pocket computer
+#   ./tools/emulate groups --window      show the window instead of hiding it
+#   ./tools/emulate --shell              drop into a live CraftOS-PC shell
+#
+# The repo is mounted READ-ONLY inside the emulator and the emulated computer
+# writes only to tools/emulator/out/. The live controller is never involved.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AUT="$REPO/ActuallyUsefulTurtles"
+EMU="$REPO/tools/emulator"
+OUT="$EMU/out"
+APP="$HOME/.local/opt/craftos-pc/CraftOS-PC.x86_64.AppImage"
+
+[ -x "$APP" ] || { echo "CraftOS-PC not found at $APP" >&2; exit 1; }
+
+SCREEN="groups"
+SCENARIO="default"
+COLS=57
+ROWS=38
+HIDE=1
+SHELL_MODE=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --scenario) SCENARIO="$2"; shift 2 ;;
+    --size)     COLS="${2%x*}"; ROWS="${2#*x}"; shift 2 ;;
+    --window)   HIDE=0; shift ;;
+    --shell)    SHELL_MODE=1; HIDE=0; shift ;;
+    -h|--help)  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -*)         echo "unknown option: $1" >&2; exit 2 ;;
+    *)          SCREEN="$1"; shift ;;
+  esac
+done
+
+DATA="$OUT/data"
+rm -rf "$DATA"
+mkdir -p "$DATA/config" "$OUT"
+
+# Terminal size = the screen we are emulating. CraftOS-PC reads these at start.
+cat > "$DATA/config/global.json" <<JSON
+{ "defaultWidth": $COLS, "defaultHeight": $ROWS, "checkUpdates": false,
+  "romReadOnly": true, "showFPS": false, "useHardwareRenderer": false }
+JSON
+
+MOUNTS=(
+  --mount-ro "/src/patch=$AUT/patches"
+  --mount-ro "/src/tunnelnav=$AUT/tunnelnav"
+  --mount-ro "/src/general=$AUT/controller/general"
+  --mount-ro "/src/gui=$AUT/controller/gui"
+  --mount-ro "/src/host=$AUT/controller/host"
+  --mount-ro "/src/storage=$AUT/controller/storage"
+  --mount-ro "/src/turtle=$AUT/controller/turtle"
+  --mount-ro "/emu=$EMU"
+)
+
+# A real renderer is required: the dummy SDL driver creates no framebuffer, so
+# term.screenshot() silently produces nothing. Hide the window off-screen rather
+# than have it flash over whatever you are doing.
+export SDL_VIDEODRIVER=x11
+export DISPLAY="${DISPLAY:-:1}"
+if [ "$HIDE" = "1" ]; then
+  export SDL_VIDEO_WINDOW_POS="-4000,-4000"
+fi
+
+if [ "$SHELL_MODE" = "1" ]; then
+  echo "CraftOS-PC shell. Repo mounted read-only at /src, harness at /emu."
+  exec "$APP" --gui -d "$DATA" "${MOUNTS[@]}"
+fi
+
+echo "rendering '$SCREEN' at ${COLS}x${ROWS} (scenario: $SCENARIO)"
+set +e
+timeout 90 "$APP" --gui -d "$DATA" "${MOUNTS[@]}" \
+  --script "$EMU/harness.lua" --args "$SCREEN $SCENARIO" >/dev/null 2>&1
+rc=$?
+set -e
+
+LOG="$DATA/computer/0/harness.log"
+[ -f "$LOG" ] && { echo "--- harness log ---"; cat "$LOG"; }
+
+SHOT="$(find "$DATA/screenshots" -name '*.png' 2>/dev/null | sort | tail -1)"
+if [ -n "$SHOT" ]; then
+  DEST="$OUT/${SCREEN}-${SCENARIO}-${COLS}x${ROWS}.png"
+  cp "$SHOT" "$DEST"
+  echo "--- screenshot: $DEST"
+else
+  echo "--- no screenshot produced (exit $rc)" >&2
+  exit 1
+fi
