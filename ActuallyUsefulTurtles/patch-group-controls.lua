@@ -6,7 +6,7 @@ local files = {
     targets = {"gui/classChoiceSelector.lua", "runtime/classChoiceSelector.lua"},
   },
   {
-    url = "https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/patches/classTaskGroupDetails.lua",
+    url = "https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/c9c98abf9ee91b2ef4f7931665fd05858ebda950/ActuallyUsefulTurtles/patches/classTaskGroupDetails.lua",
     targets = {"gui/classTaskGroupDetails.lua", "runtime/classTaskGroupDetails.lua"},
   },
 }
