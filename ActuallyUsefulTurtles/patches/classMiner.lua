@@ -119,6 +119,15 @@ local function isTurtleBlockId(id)
 		or id == "computercraft:turtle"
 end
 
+-- LABENHANCED_AUTO_TORCHES
+-- One stack maximum per miner. Vanilla torches emit block light 14; with the
+-- torch one block sideways and one block above the turtle floor, placing every
+-- 11 forward blocks keeps the floor at block-light >= 1. The next block would
+-- otherwise be spawnable (block light 0 in modern vanilla).
+local tunnelTorchItem = "minecraft:torch"
+local tunnelTorchMax = 64
+local tunnelTorchSpacing = 11
+
 local disallowedBlocks = {
 ["minecraft:chest"] = true,
 ["minecraft:hopper"]=true,
@@ -790,6 +799,7 @@ function Miner:transferItems()
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local hasFuel = false
 	local hasTunnelMaterial = false
+	local keptTorches = 0 -- LABENHANCED_AUTO_TORCHES: never keep more than 64
 	local hasInventory = false
 	local startOrientation = self.orientation
 	
@@ -814,6 +824,18 @@ function Miner:transferItems()
 			if data and data.name then
 				if not hasFuel and fuelItems[data.name] then
 					hasFuel = true --keep the fuel
+				elseif data.name == tunnelTorchItem then
+					local keep = math.min(data.count,math.max(tunnelTorchMax-keptTorches,0))
+					keptTorches = keptTorches + keep
+					if keep < data.count then
+						self:select(slot)
+						local excess = data.count - keep
+						local ok = turtle.drop(excess)
+						if ok ~= true then
+							print(ok,"inventory in front is full")
+							break
+						end
+					end
 				elseif data.name == veinBackfillItem and (self.veinTrace or not hasTunnelMaterial) then
 					-- Always keep one stack for tunnel/lava maintenance. During a
 					-- vein excursion keep all cobbled deepslate until cleanup is done.
@@ -842,7 +864,8 @@ function Miner:dumpBadItems(dropAll)
 	for i = 0,default.inventorySize-1 do
 		local slot = (i+startSlot-1)%default.inventorySize +1
 		local data = turtle.getItemDetail(slot)
-		if data and (mineBlocks[data.name] or ( dropAll and not fuelItems[data.name])) then
+		if data and data.name ~= tunnelTorchItem
+		and (mineBlocks[data.name] or ( dropAll and not fuelItems[data.name])) then
 			if data.name == veinBackfillItem and (self.veinTrace or not hasTunnelMaterial) then
 				-- Always reserve one stack for tunnel maintenance. Preserve all
 				-- cobbled deepslate while closing an active vein excursion.
@@ -1573,7 +1596,8 @@ function Miner:dig(side)
 	--local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	self:updateLookingAt()
 	local target = vector.new(self.lookingAt.x,self.lookingAt.y,self.lookingAt.z)
-	if self.activeMiningBounds and not self:isInsideActiveMiningBounds(target) then
+	if self.activeMiningBounds and not self:isInsideActiveMiningBounds(target)
+	and not self.allowTorchNicheDig then
 		print("MINING BOUNDARY - REFUSING TO DIG OUTSIDE JOB")
 		return false
 	end
@@ -2443,6 +2467,7 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 				tunnelDirection = -1 * directionFactor,
 				startPos = vector.new(self.pos.x, self.pos.y, self.pos.z),
 				startOrientation = self.orientation,
+				torchSide = -1,
 			},
 			args = tablepack(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect),
 		}
@@ -2528,7 +2553,29 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 					self.checkPointer:save(self) -- perhaps at start of for-loop
 					
 
+					-- LABENHANCED_AUTO_TORCHES
+					-- Only the long mining row receives torches. Short connector
+					-- moves between rows do not, keeping the layout clean.
+					if self.activeMiningBounds and not noInspect then
+						self.autoTunnelTorches = true
+						self.tunnelTorchSteps = 0
+						self.tunnelTorchSide = vars.torchSide or -1
+
+						-- Seed each row with a light at the entrance, then place the
+						-- next one just before vanilla block light would reach 0.
+						self:placeTunnelTorchNiche(self.tunnelTorchSide)
+						vars.torchSide = self.tunnelTorchSide
+					end
+
 					self:tunnelStraight(rowLength, noInspect)
+
+					if self.autoTunnelTorches then
+						vars.torchSide = self.tunnelTorchSide
+						self.autoTunnelTorches = false
+						self.tunnelTorchSteps = 0
+						self.checkPointer:save(self)
+					end
+
 					if currentRow < rows then
 						self:turnTo(vars.rowOrientation + vars.tunnelDirection)
 						self:tunnelStraight(rowFactor, noInspect)
@@ -2599,6 +2646,8 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 --------------------
 
 	if taskState.stage == 2 then
+		self.autoTunnelTorches = false
+		self.tunnelTorchSteps = 0
 		-- Return through the tunnel network only. Never carve a 1x1 shortcut
 		-- back to the strip-mine entrance.
 		if not self:navigateOpenPathToPos(vars.startPos.x, vars.startPos.y, vars.startPos.z) then
@@ -3631,6 +3680,109 @@ end
 -- block: once for exposed ores and again for lava. That doubled rotations,
 -- inspections and up/down movement. This pass handles BOTH in one physical
 -- shell scan while preserving the same fair-mining and lava behavior.
+-- LABENHANCED_AUTO_TORCHES
+function Miner:countTunnelTorches()
+	local count = 0
+	for slot=1,default.inventorySize do
+		local data = turtle.getItemDetail(slot)
+		if data and data.name == tunnelTorchItem then
+			count = count + data.count
+		end
+	end
+	return count
+end
+
+function Miner:placeTunnelTorchNiche(side)
+	-- Put a standing torch in a one-block recess beside the UPPER half of the
+	-- 1x2 tunnel. The lower travel lane remains completely unobstructed.
+	local slot = self:findInventoryItem(tunnelTorchItem)
+	if not slot then
+		if not self.torchEmptyWarned then
+			print("OUT OF TORCHES - CONTINUING WITHOUT LIGHTING")
+			self.torchEmptyWarned = true
+		end
+		return false
+	end
+
+	local startOrientation = self.orientation
+	local startSlot = turtle.getSelectedSlot()
+	local lowerY = self.pos.y
+
+	-- The upper tunnel cell must be open; never dig upward just to place light.
+	local blockedUp = turtle.inspectUp()
+	if blockedUp or not self:up() then
+		self:turnTo(startOrientation)
+		self:select(startSlot)
+		return false
+	end
+
+	local sideOffset = (side or -1) < 0 and -1 or 1
+	self:turnTo(startOrientation + sideOffset)
+
+	-- Only carve a torch recess into a real wall. If this side is already open
+	-- (intersection/cave), skip it rather than placing a torch in travel space.
+	local hasWall,wallData = turtle.inspect()
+	local wallName = hasWall and wallData and wallData.name or nil
+	local placed = false
+
+	if hasWall and not checkDisallowed(wallName) then
+		self.allowTorchNicheDig = true
+		local dug = self:dig()
+		self.allowTorchNicheDig = false
+
+		if dug then
+			self:select(slot)
+			placed = turtle.place()
+			local target = self.pos + self.vectors[self.orientation]
+			if placed then
+				self:setMapValue(target.x,target.y,target.z,tunnelTorchItem)
+				print("TORCH",sideOffset < 0 and "LEFT" or "RIGHT",
+					"remaining",self:countTunnelTorches())
+			else
+				-- Keep the tunnel wall neat if the torch itself could not be placed.
+				if self:getTunnelMaterialSlot() then
+					self:placeBlock(veinBackfillItem)
+				end
+			end
+		end
+	end
+
+	self:turnTo(startOrientation)
+
+	-- Return to the lower travel lane. A teammate below is traffic, not a block
+	-- to mine; give it a brief chance to clear.
+	local returned = false
+	for _=1,20 do
+		if self:down() then
+			returned = true
+			break
+		end
+		local hasDown,data = turtle.inspectDown()
+		if hasDown and not isTurtleBlockId(data and data.name) then break end
+		sleep(0.25)
+	end
+
+	self:turnTo(startOrientation)
+	self:select(startSlot)
+
+	if not returned or self.pos.y ~= lowerY then
+		error("TORCH NICHE: COULD NOT RETURN TO LOWER TUNNEL CELL",0)
+	end
+
+	if placed then
+		self.tunnelTorchSide = -sideOffset
+		self.tunnelTorchSteps = 0
+	end
+	return placed
+end
+
+function Miner:maybePlaceTunnelTorch()
+	if not self.autoTunnelTorches then return false end
+	self.tunnelTorchSteps = (self.tunnelTorchSteps or 0) + 1
+	if self.tunnelTorchSteps < tunnelTorchSpacing then return false end
+	return self:placeTunnelTorchNiche(self.tunnelTorchSide or -1)
+end
+
 function Miner:inspectTunnelShellFace(direction, allowOre)
 	local hasBlock, data
 	local target
@@ -3880,6 +4032,9 @@ function Miner:tunnel(length, direction, noInspect)
 			end
 			self.activeTunnelAnchor = vector.new(self.pos.x,self.pos.y,self.pos.z)
 			self:maintainAndInspectTunnelCell(not noInspect)
+			if self.autoTunnelTorches and not noInspect then
+				self:maybePlaceTunnelTorch()
+			end
 		end
 
 		self:updateProgress("tunnel", i)
