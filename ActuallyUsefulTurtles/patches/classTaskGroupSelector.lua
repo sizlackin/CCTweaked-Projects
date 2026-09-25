@@ -439,18 +439,19 @@ function TaskGroupSelector:showAreaPreview()
 end
 
 function TaskGroupSelector:deselectArea()
-	-- DESELECT means discard the current WorldEdit selection and leave edit
-	-- mode. Remove the red outline/anchors and the selection controls so the
-	-- map immediately returns to normal interaction.
-	self.selectionMode = false
-	if self.mapDisplay then
-		self.mapDisplay.doSelectPosition = false
-	end
+	-- DESELECT clears the current WorldEdit selection and immediately starts
+	-- a fresh selection. The next right-click is always POS1 (GREEN), rather
+	-- than returning the map to pan/recenter mode.
 	self.positions = {}
 	self:clearSelectionOverlay()
-	self:clearAreaControls()
+	self.selectionMode = true
 	self:refresh()
+	self:showAreaControls()
 	if self.mapDisplay then
+		self.mapDisplay.onPositionSelected = function(objRef,x,y,z)
+			self:onAreaSelected(x,y,z)
+		end
+		self.mapDisplay:selectPosition()
 		self.mapDisplay.fullRedraw = true
 		self.mapDisplay:redraw()
 	end
