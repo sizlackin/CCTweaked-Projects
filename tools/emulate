@@ -104,9 +104,9 @@ echo "rendering '$SCREEN' at ${COLS}x${ROWS} (scenario: $SCENARIO)"
 DEST="$OUT/${SCREEN}-${SCENARIO}-${COLS}x${ROWS}.png"
 LOG="$DATA/computer/0/harness.log"
 
-# One preview at a time, otherwise windows pile up.
-pkill -f "CraftOS-PC.*emulator/out/data" 2>/dev/null || true
-
+# Deliberately does NOT close an already-open preview. Offscreen renders must
+# never disturb a window you are looking at, and two previews side by side is
+# often exactly what you want when comparing screens. Use --close to clear them.
 set +e
 if [ "$KEEP" = "1" ]; then
   "$APP" --gui -d "$DATA" "${MOUNTS[@]}" \
@@ -131,7 +131,7 @@ SHOT="$(find "$DATA/screenshots" -name '*.png' 2>/dev/null | sort | tail -1)"
 if [ -n "$SHOT" ]; then
   cp "$SHOT" "$DEST"
   echo "--- screenshot: $DEST"
-  [ "$KEEP" = "1" ] && echo "--- preview window is open; close it, or run: ./tools/emulate --close"
+  [ "$KEEP" = "1" ] && echo "--- preview window open (previous ones left alone; ./tools/emulate --close clears all)"
 else
   echo "--- no screenshot produced (exit $rc)" >&2
   exit 1

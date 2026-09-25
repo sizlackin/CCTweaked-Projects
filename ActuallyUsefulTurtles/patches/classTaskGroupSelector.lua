@@ -31,6 +31,14 @@ local default = {
 -- dark glyph. Colours below are additions only - nothing existing is repurposed.
 local ui = {
 	plate   = colors.gray,
+	-- LABENHANCED_NEWGROUP_HMI
+	-- The title bar was the same gray as the data cards, so the two ran together
+	-- into one block. CC has no grey darker than the cards' gray except the panel
+	-- background itself, so the chrome moves UP instead: title bar matches the
+	-- lightGray border, leaving the cards darker than both.
+	header      = colors.lightGray,
+	headerText  = colors.black,
+	headerDim   = colors.gray,
 	caption = colors.lightGray,
 	value   = colors.white,
 	control = colors.lightGray,
@@ -190,14 +198,14 @@ function TaskGroupSelector:initialize()
 	-- LABENHANCED_NEWGROUP_HMI
 	-- Header strip instead of a titled Frame. The Window already draws one
 	-- border; a Frame inside it was a second box around the same panel.
-	self.boxHeader = Box:new(1, L.headerRow, self.width, 1, ui.plate)
-	self.lblTitle = Label:new("NEW GROUP", 2, L.headerRow, ui.value, ui.plate)
+	self.boxHeader = Box:new(1, L.headerRow, self.width, 1, ui.header)
+	self.lblTitle = Label:new("NEW GROUP", 2, L.headerRow, ui.headerText, ui.header)
 	-- LABENHANCED_NEWGROUP_HMI
 	-- The header's right slot carries live state, as on the Groups page. A
 	-- truncated internal id was nothing you could act on - and on cancel it is
 	-- discarded and never seen again. The size of the selection is the number
 	-- that actually decides whether this job is sane.
-	self.lblAreaSize = Label:new("", 14, L.headerRow, ui.caption, ui.plate)
+	self.lblAreaSize = Label:new("", 14, L.headerRow, ui.headerDim, ui.header)
 	self:addObject(self.boxHeader)
 	self:addObject(self.lblTitle)
 	self:addObject(self.lblAreaSize)
