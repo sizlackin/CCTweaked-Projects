@@ -2466,12 +2466,20 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 				baseTunnelDirection = rowTurnDirection or -1,
 				startPos = vector.new(self.pos.x, self.pos.y, self.pos.z),
 				startOrientation = self.orientation,
-				torchSide = -1, -- fixed left wall
+				-- The wall physically left of the FIRST row remains the torch
+				-- wall for the whole zigzag strip.
+				torchWallOrientation = (self.orientation-1)%4,
 			},
 			args = tablepack(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps, rowTurnDirection),
 		}
 	end
 	local vars = taskState.vars
+	-- LABENHANCED_FIXED_TORCH_WALL
+	-- Existing checkpoints from the old relative-left implementation won't
+	-- have this value. Derive it from the saved first-row orientation.
+	if vars.torchWallOrientation == nil then
+		vars.torchWallOrientation = ((vars.startOrientation or self.orientation)-1)%4
+	end
 	currentTask.taskState = taskState
 	self.checkPointer:save(self)
 	-- prepare values
@@ -2561,19 +2569,25 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 					if self.activeMiningBounds and not noInspect then
 						self.autoTunnelTorches = true
 						self.tunnelTorchSteps = 0
-						self.tunnelTorchSide = -1
+
+						-- LABENHANCED_FIXED_TORCH_WALL
+						-- Keep one ABSOLUTE physical wall across the whole snake.
+						-- On the return row this intentionally becomes "right"
+						-- relative to travel, preventing facing niches from cutting
+						-- through the two-block divider between parallel tunnels.
+						local rowTorchSide = getTorchSideForFixedWall(
+							self.orientation, vars.torchWallOrientation
+						)
+						self.tunnelTorchSide = rowTorchSide
 
 						-- Seed each row with a light at the entrance, then place the
 						-- next one just before vanilla block light would reach 0.
-						-- Every torch goes on the LEFT wall relative to travel.
-						self:placeTunnelTorchNiche(-1)
-						vars.torchSide = -1
+						self:placeTunnelTorchNiche(rowTorchSide)
 					end
 
 					self:tunnelStraight(rowLength, noInspect)
 
 					if self.autoTunnelTorches then
-						vars.torchSide = -1
 						self.autoTunnelTorches = false
 						self.tunnelTorchSteps = 0
 						self.checkPointer:save(self)
@@ -3177,6 +3191,16 @@ local function getStripRowTurnDirection(orientation,startPos,finishPos)
 		return -1
 	end
 	return 1
+end
+
+-- LABENHANCED_FIXED_TORCH_WALL
+-- stripMine snakes back and forth. "Left relative to travel" therefore flips
+-- physical walls every row and can make opposing torch niches eat both blocks
+-- of the 2-block divider. Pick one ABSOLUTE wall from the first row instead.
+local function getTorchSideForFixedWall(rowOrientation,wallOrientation)
+	if ((rowOrientation-1)%4) == wallOrientation then return -1 end
+	if ((rowOrientation+1)%4) == wallOrientation then return 1 end
+	return -1
 end
 
 function Miner:mineArea(start, finish) 
@@ -3885,10 +3909,11 @@ function Miner:placeTunnelTorchNiche(side)
 	end
 
 	if placed then
-		-- LABENHANCED_LEFT_WALL_TORCHES
-		-- Keep every mining-row torch on the LEFT wall relative to the
-		-- turtle's current direction of travel. Do not alternate sides.
-		self.tunnelTorchSide = -1
+		-- LABENHANCED_FIXED_TORCH_WALL
+		-- Keep using the same requested side for the remainder of THIS row.
+		-- The next zigzag row recomputes relative left/right so the absolute
+		-- physical wall stays the same.
+		self.tunnelTorchSide = sideOffset
 		self.tunnelTorchSteps = 0
 	end
 	return placed
