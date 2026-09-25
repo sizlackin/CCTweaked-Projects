@@ -306,7 +306,9 @@ local function drawModeToggle(cb)
 	local bg = colors.gray
 	local accent = cb.active and cb.accentColor or colors.gray
 	local textColor = cb.active and colors.white or colors.lightGray
-	-- Same compact lamp language as MAP OPTIONS, on an X/Z-style gray plate.
+	-- Compact one-row plate. The status lamp owns column 1, column 2 is
+	-- guaranteed padding, and the label starts at column 3 so it cannot clip
+	-- into the colored lamp.
 	cb.parent:drawFilledBox(cb.x, cb.y, cb.width, 1, bg)
 	cb.parent:drawText(cb.x, cb.y, cb.active and "\136" or " ", colors.black, accent)
 	cb.parent:drawText(cb.x + 2, cb.y, cb.labelText, textColor, bg)
@@ -346,6 +348,7 @@ function TaskGroupSelector:showModeControls()
 	self.btnSelectionMode = CheckBox:new(x, 1, "Select", not self.cursorMode, width, 1, colors.gray)
 	self.btnSelectionMode.accentColor = colors.green
 	self.btnSelectionMode.redraw = drawModeToggle
+	self.btnSelectionMode.handleClick = function() self.btnSelectionMode.click() end
 	self.btnSelectionMode.click = function()
 		self:setMapInteractionMode(false)
 		return true
@@ -354,6 +357,7 @@ function TaskGroupSelector:showModeControls()
 	self.btnCursorMode = CheckBox:new(x, 2, "Cursor", self.cursorMode, width, 1, colors.gray)
 	self.btnCursorMode.accentColor = colors.cyan
 	self.btnCursorMode.redraw = drawModeToggle
+	self.btnCursorMode.handleClick = function() self.btnCursorMode.click() end
 	self.btnCursorMode.click = function()
 		self:setMapInteractionMode(true)
 		return true
