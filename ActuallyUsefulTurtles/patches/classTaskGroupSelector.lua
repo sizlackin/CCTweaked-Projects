@@ -903,6 +903,12 @@ function TaskGroupSelector:selectTask()
 	-- under the one that closes the dialog.
 	menu:removeCloseButton()
 
+	-- LABENHANCED_NEWGROUP_HMI
+	-- Outline matches the dialog's own frame rather than ChoiceSelector's default
+	-- gray, which was the same gray as the field's padding and made the open menu
+	-- read as an extension of the field. The menu's interior is left alone.
+	menu:setBorderColor(ui.header)
+
 	menu.onChoiceSelected = function(choice)
 		self.taskName = choice
 		self.lblTask:setText(self.taskName)
