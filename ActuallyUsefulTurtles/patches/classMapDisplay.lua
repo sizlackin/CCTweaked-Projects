@@ -942,6 +942,7 @@ function MapDisplay:redraw() -- super override
 		-- draw called multiple times: hostdisplay, turtledetails (redraw + checkupdates)
 		-- print("map", "redraw ct", ct, "time", os.epoch("utc") - start)
 		
+		self:redrawSelectionOutline()
 		self:redrawOverlay()
 		self:redrawSelectionAnchors()
 		if not self.hiddenControls then self:drawChrome() end
@@ -1040,7 +1041,7 @@ function MapDisplay:drawAreas()
 		-- keeping the red outline at the exact selected world coordinate.
 		for _,area in ipairs(areas) do
 			local start, finish, color = area.start, area.finish, area.color
-			if start and finish and not area.selectionAnchor then
+			if start and finish and not area.selectionAnchor and not area.selectionOutline then
 				local sx, sz = self:transformSubPos(start)
 				local ex, ez = self:transformSubPos(finish)
 				self.drawer:drawBox(sx, sz, ex-sx+1, ez-sz+1, blitTab[color], 1)
@@ -1095,6 +1096,90 @@ function MapDisplay:drawChunkCircle()
 		self.drawer:drawCircle(centerX, centerZ, radius, colors.toBlit(colors.orange))
 		local radius = 16*16 / self.zoomLevel
 		self.drawer:drawCircle(centerX, centerZ, radius, colors.toBlit(colors.red))
+	end
+end
+
+function MapDisplay:redrawSelectionOutline()
+	-- LABENHANCED_PRECISE_SELECTION_OUTLINE
+	-- Selection borders used to be drawn into PixelDrawer together with terrain.
+	-- A 2x3 terminal cell can only contain two colors, so a one-pixel red border
+	-- could be quantized away whenever a tunnel introduced extra colors.
+	--
+	-- Composite ONLY the live selection border after the terrain frame instead.
+	-- Each touched terminal cell keeps one dominant terrain color plus red, which
+	-- guarantees the border survives while preserving true 2x3 pixel alignment.
+	if not self.areas or not self.drawer or not PixelDrawer.pixelsToChar then return end
+
+	local frame = self.drawer.frame
+	local fw,fh = self.drawer.width,self.drawer.height
+	local red = blitTab[colors.red]
+
+	local function addPixel(cells,px,py)
+		if px < 1 or px > fw or py < 1 or py > fh then return end
+		local cx = math.floor((px-1)/2)+1
+		local cy = math.floor((py-1)/3)+1
+		local key = cy..":"..cx
+		local cell = cells[key]
+		if not cell then
+			cell = {x=cx,y=cy,mask={}}
+			cells[key] = cell
+		end
+		local lx = (px-1)%2
+		local ly = (py-1)%3
+		local idx = ly*2 + lx + 1
+		cell.mask[idx] = true
+	end
+
+	for _,area in ipairs(self.areas) do
+		if area.selectionOutline and area.start and area.finish then
+			local sx,sy = self:transformSubPos(area.start)
+			local ex,ey = self:transformSubPos(area.finish)
+			if sx > ex then sx,ex = ex,sx end
+			if sy > ey then sy,ey = ey,sy end
+
+			local cells = {}
+			for x=sx,ex do
+				addPixel(cells,x,sy)
+				addPixel(cells,x,ey)
+			end
+			for y=sy,ey do
+				addPixel(cells,sx,y)
+				addPixel(cells,ex,y)
+			end
+
+			for _,cell in pairs(cells) do
+				local px0 = (cell.x-1)*2 + 1
+				local py0 = (cell.y-1)*3 + 1
+				local under = {
+					frame[py0] and frame[py0][px0] or blitTab[self.backgroundColor],
+					frame[py0] and frame[py0][px0+1] or blitTab[self.backgroundColor],
+					frame[py0+1] and frame[py0+1][px0] or blitTab[self.backgroundColor],
+					frame[py0+1] and frame[py0+1][px0+1] or blitTab[self.backgroundColor],
+					frame[py0+2] and frame[py0+2][px0] or blitTab[self.backgroundColor],
+					frame[py0+2] and frame[py0+2][px0+1] or blitTab[self.backgroundColor],
+				}
+
+				-- Pick the most common NON-selection terrain color in this cell.
+				-- The resulting character uses exactly {terrain, red}, so red
+				-- can never be discarded by color quantization.
+				local counts,bg,best = {},blitTab[self.backgroundColor],-1
+				for i=1,6 do
+					if not cell.mask[i] then
+						local col = under[i]
+						counts[col] = (counts[col] or 0) + 1
+						if counts[col] > best then bg,best = col,counts[col] end
+					end
+				end
+
+				local p = {}
+				for i=1,6 do p[i] = cell.mask[i] and red or bg end
+				local txt,fg,bgc = PixelDrawer.pixelsToChar(
+					p[1],p[2],p[3],p[4],p[5],p[6]
+				)
+				self:setCursorPos(cell.x,cell.y)
+				self:blit(txt,fg,bgc)
+			end
+		end
 	end
 end
 
