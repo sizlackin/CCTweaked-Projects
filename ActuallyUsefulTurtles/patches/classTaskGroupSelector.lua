@@ -306,12 +306,12 @@ local function drawModeToggle(cb)
 	local bg = colors.gray
 	local accent = cb.active and cb.accentColor or colors.gray
 	local textColor = cb.active and colors.white or colors.lightGray
-	-- Compact one-row plate. The status lamp owns column 1, column 2 is
-	-- guaranteed padding, and the label starts at column 3 so it cannot clip
-	-- into the colored lamp.
+
+	-- Keep the colored state lamp completely outside the gray label plate.
+	-- This prevents the lamp from ever eating the first character of Select/Cursor.
 	cb.parent:drawFilledBox(cb.x, cb.y, cb.width, 1, bg)
-	cb.parent:drawText(cb.x, cb.y, cb.active and "\136" or " ", colors.black, accent)
-	cb.parent:drawText(cb.x + 2, cb.y, cb.labelText, textColor, bg)
+	cb.parent:drawText(cb.x, cb.y, " ", colors.black, accent)
+	cb.parent:drawText(cb.x + 1, cb.y, cb.labelText, textColor, bg)
 end
 
 function TaskGroupSelector:clearModeControls()
@@ -343,7 +343,7 @@ function TaskGroupSelector:showModeControls()
 
 	-- One black-cell gap after the yellow level + control.
 	local x = self.mapDisplay.btnLevelUp.x + self.mapDisplay.btnLevelUp.width + 1
-	local width = 10
+	local width = 8
 
 	self.btnSelectionMode = CheckBox:new(x, 1, "Select", not self.cursorMode, width, 1, colors.gray)
 	self.btnSelectionMode.accentColor = colors.green
