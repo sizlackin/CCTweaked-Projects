@@ -24,6 +24,10 @@ TunnelMap.DIRS = {
 local dirOrder = {"north","south","west","east","up","down"}
 local now = function() return os.epoch("utc") end
 
+local function manhattan(a,b)
+	return math.abs(a.x-b.x)+math.abs(a.y-b.y)+math.abs(a.z-b.z)
+end
+
 local function copyPos(p)
 	return {x=p.x,y=p.y,z=p.z}
 end
@@ -434,10 +438,6 @@ function TunnelMap:getOpenNeighbors(pos)
 		end
 	end
 	return out
-end
-
-local function manhattan(a,b)
-	return math.abs(a.x-b.x)+math.abs(a.y-b.y)+math.abs(a.z-b.z)
 end
 
 local function heapPush(heap,item)
