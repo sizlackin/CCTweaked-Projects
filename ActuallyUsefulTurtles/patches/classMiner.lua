@@ -2568,7 +2568,13 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 					-- moves between rows do not, keeping the layout clean.
 					if self.activeMiningBounds and not noInspect then
 						self.autoTunnelTorches = true
-						self.tunnelTorchSteps = 0
+
+						-- LABENHANCED_CLEAR_TUNNEL_ENDS
+						-- Never put a torch niche directly on a shared spine / row
+						-- endpoint. Start lighting two blocks INTO the row, then
+						-- continue at normal spacing. This keeps both end spines
+						-- completely clear for later connection.
+						self.tunnelTorchSteps = tunnelTorchSpacing - 2
 
 						-- LABENHANCED_FIXED_TORCH_WALL
 						-- Keep one ABSOLUTE physical wall across the whole snake.
@@ -2579,10 +2585,6 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 							self.orientation, vars.torchWallOrientation
 						)
 						self.tunnelTorchSide = rowTorchSide
-
-						-- Seed each row with a light at the entrance, then place the
-						-- next one just before vanilla block light would reach 0.
-						self:placeTunnelTorchNiche(rowTorchSide)
 					end
 
 					self:tunnelStraight(rowLength, noInspect)
@@ -3111,38 +3113,66 @@ end
 -- creates parallel rows and short 3-block turns; this adds one continuous 1x2
 -- spine along the opposite edge so every row endpoint is tied into the same
 -- tunnel network. It stays inside this turtle's assigned stripe.
-function Miner:connectMiningFarEdge(startPos,finishPos,orientation)
+function Miner:connectMiningFarEdge(startPos,finishPos,orientation,assignedBounds)
 	if not startPos or not finishPos or orientation == nil then return false end
 
+	-- LABENHANCED_COMPLETE_FAR_EDGE_SPINE
+	-- startPos/finishPos describe the first/last GLOBAL strip lanes assigned to
+	-- this turtle. Those lanes are 3 blocks apart across turtle boundaries, so
+	-- connecting only lane-to-lane leaves a 2-block gap between neighboring
+	-- turtles' far-edge spines. Instead, extend each turtle's connector across
+	-- its FULL assigned stripe bounds. Adjacent bounds touch, producing one
+	-- continuous far-side spine across the whole mine.
 	local y = startPos.y
-	local edgeStart,edgeEnd
+	local edgeAnchor,edgeLow,edgeHigh
 
 	if orientation % 2 == 0 then
-		-- Mining rows run north/south (Z). Join them across X at the far Z edge.
-		edgeStart = vector.new(startPos.x,y,finishPos.z)
-		edgeEnd = vector.new(finishPos.x,y,finishPos.z)
+		-- Mining rows run north/south (Z); far edge is constant Z, span X.
+		local farZ = finishPos.z
+		local minX = assignedBounds and assignedBounds.minX
+			or math.min(startPos.x,finishPos.x)
+		local maxX = assignedBounds and assignedBounds.maxX
+			or math.max(startPos.x,finishPos.x)
+		edgeAnchor = vector.new(startPos.x,y,farZ)
+		edgeLow = vector.new(minX,y,farZ)
+		edgeHigh = vector.new(maxX,y,farZ)
 	else
-		-- Mining rows run east/west (X). Join them across Z at the far X edge.
-		edgeStart = vector.new(finishPos.x,y,startPos.z)
-		edgeEnd = vector.new(finishPos.x,y,finishPos.z)
+		-- Mining rows run east/west (X); far edge is constant X, span Z.
+		local farX = finishPos.x
+		local minZ = assignedBounds and assignedBounds.minZ
+			or math.min(startPos.z,finishPos.z)
+		local maxZ = assignedBounds and assignedBounds.maxZ
+			or math.max(startPos.z,finishPos.z)
+		edgeAnchor = vector.new(farX,y,startPos.z)
+		edgeLow = vector.new(farX,y,minZ)
+		edgeHigh = vector.new(farX,y,maxZ)
 	end
 
-	if sameAccessPos(edgeStart,edgeEnd) then return true end
-
-	-- The first point is the end of the first mining row, so it should already
-	-- be open. Travel there through known tunnels only; never cut a shortcut.
-	local reached = self:navigateOpenPathToPos(edgeStart.x,edgeStart.y,edgeStart.z)
-	if not reached then
-		print("FAR EDGE SPINE: NO OPEN ROUTE TO START - SKIPPING")
+	-- edgeAnchor is a real row endpoint, so it is already part of the open
+	-- tunnel network. Reach it without cutting a shortcut.
+	if not self:navigateOpenPathToPos(edgeAnchor.x,edgeAnchor.y,edgeAnchor.z) then
+		print("FAR EDGE SPINE: NO OPEN ROUTE TO ROW END - SKIPPING")
 		return false
 	end
 
-	print("CONNECTING FAR EDGE TUNNEL SPINE")
-	local ok = self:digNeatAccessTunnelTo(edgeEnd)
-	if ok and self.flushTunnelUpdatesSync then
-		self:flushTunnelUpdatesSync()
+	self.autoTunnelTorches = false
+	self.tunnelTorchSteps = 0
+
+	print("CONNECTING COMPLETE FAR EDGE TUNNEL SPINE")
+	-- First cover one side of this turtle's stripe, then traverse the full span
+	-- to the other side. Existing row-end torches are mineable decoration here:
+	-- the 1x2 spine takes priority and clears them if an older task placed one.
+	if not sameAccessPos(self.pos,edgeLow)
+	and not self:digNeatAccessTunnelTo(edgeLow) then
+		return false
 	end
-	return ok
+	if not sameAccessPos(self.pos,edgeHigh)
+	and not self:digNeatAccessTunnelTo(edgeHigh) then
+		return false
+	end
+
+	if self.flushTunnelUpdatesSync then self:flushTunnelUpdatesSync() end
+	return true
 end
 
 -- LABENHANCED_EFFICIENT_STRIP_ROWS
@@ -3448,10 +3478,10 @@ function Miner:mineArea(start, finish)
 			-- far end as well. Each turtle only connects the far edge of its own
 			-- assigned stripe; adjacent stripes meet naturally into one spine.
 			if levels == 1 or levels == -1 then
-				self:connectMiningFarEdge(start,finish,orientation)
+				self:connectMiningFarEdge(start,finish,orientation,assignedBounds)
 			else
 				print("FAR EDGE SPINE: MULTI-LEVEL JOB - CONNECTING BASE LEVEL ONLY")
-				self:connectMiningFarEdge(start,finish,orientation)
+				self:connectMiningFarEdge(start,finish,orientation,assignedBounds)
 			end
 			
 		end
@@ -3919,10 +3949,19 @@ function Miner:placeTunnelTorchNiche(side)
 	return placed
 end
 
-function Miner:maybePlaceTunnelTorch()
+function Miner:maybePlaceTunnelTorch(remaining)
 	if not self.autoTunnelTorches then return false end
 	self.tunnelTorchSteps = (self.tunnelTorchSteps or 0) + 1
 	if self.tunnelTorchSteps < tunnelTorchSpacing then return false end
+
+	-- LABENHANCED_CLEAR_TUNNEL_ENDS
+	-- A niche cut at the final row cell occupies the upper half of the future
+	-- far-edge spine. Skip that placement; the previous torch is still close
+	-- enough to keep the endpoint lit.
+	if remaining ~= nil and remaining <= 0 then
+		return false
+	end
+
 	return self:placeTunnelTorchNiche(self.tunnelTorchSide or -1)
 end
 
@@ -4176,7 +4215,7 @@ function Miner:tunnel(length, direction, noInspect)
 			self.activeTunnelAnchor = vector.new(self.pos.x,self.pos.y,self.pos.z)
 			self:maintainAndInspectTunnelCell(not noInspect)
 			if self.autoTunnelTorches and not noInspect then
-				self:maybePlaceTunnelTorch()
+				self:maybePlaceTunnelTorch(length - i)
 			end
 		end
 
