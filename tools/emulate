@@ -7,8 +7,13 @@
 #   ./tools/emulate groups --scenario stress
 #   ./tools/emulate groups --size 51x19  computer terminal
 #   ./tools/emulate groups --size 26x20  pocket computer
-#   ./tools/emulate groups --window      show the window instead of hiding it
+#   ./tools/emulate groups --open        open a window and LEAVE it open
+#   ./tools/emulate --close              close any preview still open
 #   ./tools/emulate --shell              drop into a live CraftOS-PC shell
+#
+# By default it renders offscreen and just writes the screenshot - no window.
+# Use --open only when a preview is meant to be looked at; it then stays up
+# until closed.
 #
 # The repo is mounted READ-ONLY inside the emulator and the emulated computer
 # writes only to tools/emulator/out/. The live controller is never involved.
@@ -26,15 +31,19 @@ SCREEN="groups"
 SCENARIO="default"
 COLS=57
 ROWS=38
-HIDE=1
+KEEP=0
 SHELL_MODE=0
+PIDFILE=
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --scenario) SCENARIO="$2"; shift 2 ;;
     --size)     COLS="${2%x*}"; ROWS="${2#*x}"; shift 2 ;;
-    --window)   HIDE=0; shift ;;
-    --shell)    SHELL_MODE=1; HIDE=0; shift ;;
+    --open)     KEEP=1; shift ;;
+    --once)     KEEP=0; shift ;;
+    --close)    pkill -f 'CraftOS-PC.*emulator/out/data' 2>/dev/null \
+                  && echo "preview closed" || echo "no preview running"; exit 0 ;;
+    --shell)    SHELL_MODE=1; KEEP=0; shift ;;
     -h|--help)  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*)         echo "unknown option: $1" >&2; exit 2 ;;
     *)          SCREEN="$1"; shift ;;
@@ -67,7 +76,8 @@ MOUNTS=(
 # than have it flash over whatever you are doing.
 export SDL_VIDEODRIVER=x11
 export DISPLAY="${DISPLAY:-:1}"
-if [ "$HIDE" = "1" ]; then
+if [ "$KEEP" = "0" ]; then
+  # screenshot-and-exit: keep the window off-screen so it does not flash up
   export SDL_VIDEO_WINDOW_POS="-4000,-4000"
 fi
 
@@ -77,20 +87,37 @@ if [ "$SHELL_MODE" = "1" ]; then
 fi
 
 echo "rendering '$SCREEN' at ${COLS}x${ROWS} (scenario: $SCENARIO)"
+DEST="$OUT/${SCREEN}-${SCENARIO}-${COLS}x${ROWS}.png"
+LOG="$DATA/computer/0/harness.log"
+
+# One preview at a time, otherwise windows pile up.
+pkill -f "CraftOS-PC.*emulator/out/data" 2>/dev/null || true
+
 set +e
-timeout 90 "$APP" --gui -d "$DATA" "${MOUNTS[@]}" \
-  --script "$EMU/harness.lua" --args "$SCREEN $SCENARIO" >/dev/null 2>&1
+if [ "$KEEP" = "1" ]; then
+  "$APP" --gui -d "$DATA" "${MOUNTS[@]}" \
+    --script "$EMU/harness.lua" --args "$SCREEN $SCENARIO keep" >/dev/null 2>&1 &
+  APPPID=$!
+  # wait for the render to land rather than guessing at a sleep
+  for _ in $(seq 1 60); do
+    [ -n "$(find "$DATA/screenshots" -name '*.png' 2>/dev/null | head -1)" ] && break
+    kill -0 "$APPPID" 2>/dev/null || break
+    sleep 0.5
+  done
+else
+  timeout 90 "$APP" --gui -d "$DATA" "${MOUNTS[@]}" \
+    --script "$EMU/harness.lua" --args "$SCREEN $SCENARIO" >/dev/null 2>&1
+fi
 rc=$?
 set -e
 
-LOG="$DATA/computer/0/harness.log"
 [ -f "$LOG" ] && { echo "--- harness log ---"; cat "$LOG"; }
 
 SHOT="$(find "$DATA/screenshots" -name '*.png' 2>/dev/null | sort | tail -1)"
 if [ -n "$SHOT" ]; then
-  DEST="$OUT/${SCREEN}-${SCENARIO}-${COLS}x${ROWS}.png"
   cp "$SHOT" "$DEST"
   echo "--- screenshot: $DEST"
+  [ "$KEEP" = "1" ] && echo "--- preview window is open; close it, or run: ./tools/emulate --close"
 else
   echo "--- no screenshot produced (exit $rc)" >&2
   exit 1

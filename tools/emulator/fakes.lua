@@ -121,10 +121,21 @@ function M.buildGlobal(say, scenarioName)
 	end
 	if say then say("fake groups: %d (scenario %s)", #scenario, scenarioName or "default") end
 
-	local taskManager = {
+	local nextId = 0
+	local taskManager
+	taskManager = {
 		groups = groups,
 		getGroups = function(self) return groups end,
 		getTasks = function(self) return {} end,
+		createGroup = function(self)
+			nextId = nextId + 1
+			local g = Group.new({ id = "new" .. nextId .. "abcd", status = "new",
+				taskName = nil, groupSize = 4, active = 0 })
+			g.setGroupSize = function(self2, n) self2.groupSize = math.max(1, n) end
+			g.setFunction = function() end
+			g.start = function() end
+			return g
+		end,
 	}
 
 	local g = {

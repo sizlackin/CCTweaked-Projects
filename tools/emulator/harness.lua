@@ -6,9 +6,10 @@
 -- Nothing here touches the live controller: the repo is mounted read-only and
 -- the emulated computer keeps its own scratch data directory.
 
-local screen, scenario = ...
+local screen, scenario, keep = ...
 screen = screen or "groups"
 scenario = scenario or "default"
+keep = (keep == "keep")
 
 -- patches/ first so customised classes win over the upstream copies
 package.path = table.concat({
@@ -39,6 +40,7 @@ say("screen=%s scenario=%s", screen, scenario)
 
 local fakes = require("fakes")
 _G.global = fakes.buildGlobal(say, scenario)
+_G.global.__stage = scenario
 _G.config = _G.config or fakes.config
 
 -- ---------------------------------------------------------------------------
@@ -64,7 +66,8 @@ local function render()
 	return monitor
 end
 
-local ok, err = pcall(render)
+local ok, monitor = pcall(render)
+local err = monitor
 if not ok then
 	say("RENDER FAILED: %s", tostring(err))
 	-- leave the message on screen too so the screenshot shows it
@@ -88,6 +91,28 @@ end
 sleep(0.6)          -- let the renderer present a frame before capturing
 term.screenshot()   -- lands in <datadir>/screenshots/<timestamp>.png
 sleep(0.6)
+
+if keep and ok and monitor then
+	-- Leave the preview on screen until it is closed. Events are forwarded the
+	-- same way host/display.lua does it, so buttons actually respond; a handler
+	-- that reaches for state the harness does not fake must not kill the window,
+	-- hence the pcall.
+	say("preview open - close the window when done")
+	log.close()
+	while true do
+		local e = { os.pullEventRaw() }
+		if e[1] == "terminate" then break end
+		if e[1] == "mouse_click" or e[1] == "mouse_up" or e[1] == "mouse_drag"
+			or e[1] == "mouse_scroll" or e[1] == "term_resize" then
+			pcall(function()
+				monitor:addEvent(e)
+				monitor:checkEvents()
+				monitor:update()
+			end)
+		end
+	end
+	os.shutdown()
+end
 
 say("done")
 log.close()

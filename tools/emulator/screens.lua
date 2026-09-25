@@ -86,6 +86,41 @@ function screens.groups(global, say)
 	return win
 end
 
+-- The "new group" panel, as HostDisplay:addGroup builds it: a Window filling
+-- the Groups page. `stage` picks how far through the flow to render.
+function screens.newgroup(global, say)
+	local Window = require("classWindow")
+	local TaskGroupSelector = require("classTaskGroupSelector")
+
+	local w, h = term.getSize()
+	local page = Window:new(1, 1, w, h)
+
+	local sel = TaskGroupSelector:new(1, 1, global.taskManager, false)
+	page:addObject(sel)
+	sel:centerIn(page)
+
+	local stage = global.__stage or "area"
+	if stage ~= "empty" then
+		sel.positions = {
+			{ x = -91, y = -59, z = 692 },
+			{ x = -127, y = -59, z = 671 },
+		}
+	end
+	if stage == "empty" then sel.taskName = nil end
+
+	sel:refresh()
+	local function span(b) return b and (b.x .. "-" .. (b.x + b.width - 1)) or "?" end
+	say("cols | selectArea %s | top %s | bottom %s | split %s",
+		span(sel.btnSelectArea), span(sel.btnFromTop),
+		span(sel.btnToBottom), span(sel.btnSplitArea))
+	say("cols | taskField %s | caret %s | minus %s | plus %s",
+		span(sel.btnSelectTask), span(sel.btnTaskCaret),
+		span(sel.btnDecreaseSize), span(sel.btnIncreaseSize))
+	say("newgroup stage=%s w=%d h=%d divider=%s action=%s",
+		stage, sel.width, sel.height, tostring(sel.dividerRow), tostring(sel.actionRow))
+	return page
+end
+
 function screens.names()
 	local n = {}
 	for k in pairs(screens) do

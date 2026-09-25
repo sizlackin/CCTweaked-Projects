@@ -483,7 +483,8 @@ function HostDisplay:addGroup()
 	self.winGroups.groupSelector = TaskGroupSelector:new(1,1,self.taskManager, self.doSlowStart)
 	self.winGroups.groupSelector:setHostDisplay(self)
 	self.winGroups:addObject(self.winGroups.groupSelector)
-	self.winGroups.groupSelector:fillParent()
+	-- LABENHANCED_NEWGROUP_HMI: a centred panel, not a full-page form
+	self.winGroups.groupSelector:centerIn(self.winGroups)
 	self:redraw()
 	return true
 end

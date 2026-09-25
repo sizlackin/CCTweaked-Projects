@@ -1,3 +1,4 @@
+local Box = require("classBox")
 local Button = require("classButton")
 local Label = require("classLabel")
 local Window = require("classWindow")
@@ -23,6 +24,54 @@ local default = {
 	},
 	slowstartDelay = 0.05,
 }
+
+-- LABENHANCED_NEWGROUP_HMI
+-- Same visual grammar as the Groups page: gray plates carry grouped values,
+-- captions are dimmed, values stay white, controls are a lighter block with a
+-- dark glyph. Colours below are additions only - nothing existing is repurposed.
+local ui = {
+	plate   = colors.gray,
+	caption = colors.lightGray,
+	value   = colors.white,
+	control = colors.lightGray,
+	controlText = colors.black,
+	divider = colors.gray,
+	go      = colors.green,
+	dead    = colors.gray,
+	hint    = colors.lightGray,
+	caret      = colors.lightGray, -- caret well at the end of a dropdown field
+	caretGlyph = colors.black,
+}
+
+-- Every column and row in one place, so drawn cells and click areas cannot
+-- drift apart. Rows counted from the top; the action bar is pinned to the
+-- bottom and recomputed on resize.
+local L = {
+	headerRow   = 1,
+	padX        = 3,
+	areaCapRow  = 3,
+	areaTop     = 4,   areaRows = 5,   -- caption row + X/Y/Z
+	areaX       = 3,   areaW    = 30,
+	axisX       = 5,
+	fromEnd     = 17,                  -- FROM values right-aligned here
+	toEnd       = 26,                  -- TO values right-aligned here
+	areaBtnRow  = 10,
+	taskCapRow  = 12,
+	taskRow     = 13,
+	caretW      = 3,   -- dropdown well at the right end of a field
+	spinW       = 3,   -- - and + buttons of the turtle count spinner
+	turtCapRow  = 15,
+	turtRow     = 16,
+	turtW       = 11,
+}
+
+local function padLeft(text, width)
+	text = tostring(text)
+	local pad = width - #text
+	if pad > 0 then return string.rep(" ", pad) .. text end
+	return text
+end
+
 
 local TaskGroupSelector = Window:new()
 
@@ -57,85 +106,198 @@ end
 
 function TaskGroupSelector:onResize() -- super overwrite
 	Window.onResize(self) -- super
-	self.frm:setWidth(self.width)
-	self.frm:setHeight(self.height)
+	self:layoutPanel()
 end
+function TaskGroupSelector:usableWidth()
+	-- The close button is an overlay on the inner window's right-hand columns;
+	-- derive the last usable column from where it actually is.
+	local inner = self.innerWin
+	local width = (inner and inner.getWidth and inner:getWidth()) or self.width
+	if self.btnClose and self.btnClose.visible then
+		local originX = (inner and inner.x or 1) - (inner and inner.scrollX or 0)
+		width = math.min(width, self.btnClose.x - 1 - originX)
+	end
+	return math.max(20, width)
+end
+
+-- LABENHANCED_NEWGROUP_HMI
+-- Sized to its content and centred, rather than stretched over the whole page.
+-- A full-screen form left ~18 dead rows between the last field and the action
+-- bar; an HMI dialog is a panel, not a page.
+TaskGroupSelector.panelWidth  = 44
+TaskGroupSelector.panelHeight = 21
+
+function TaskGroupSelector:centerIn(parent)
+	local pw = parent and parent.getWidth and parent:getWidth() or self.width
+	local ph = parent and parent.getHeight and parent:getHeight() or self.height
+	local w = math.min(self.panelWidth, pw)
+	local h = math.min(self.panelHeight, ph)
+	self:setSize(w, h)
+	self:setPos(math.max(1, math.floor((pw - w) / 2) + 1),
+		math.max(1, math.floor((ph - h) / 2) + 1))
+
+	-- LABENHANCED_NEWGROUP_HMI
+	-- This is a modal panel, so the page behind it must not offer a close button
+	-- of its own: two identical red X's two rows apart gave no clue which closed
+	-- what. Unlink the page's button rather than just hiding it, because
+	-- BasicWindow:setVisible cascades to every child and would switch a hidden
+	-- one straight back on. Re-linked in close().
+	if parent and parent.btnClose and parent.removeObjectInternal then
+		self.closeOwner = parent
+		parent:removeObjectInternal(parent.btnClose)
+	end
+
+	self:layoutPanel()
+end
+
+function TaskGroupSelector:layoutPanel()
+	-- header plate stops short of the close button
+	local usable = self:usableWidth()
+	if self.boxHeader then self.boxHeader:setWidth(usable) end
+	self:layoutAreaSize(usable)
+
+	-- action bar pinned to the bottom edge
+	local h = self.height
+	-- Hint on its own row so a long one cannot collide with the buttons.
+	self.hintRow = h - 3
+	self.actionRow = h - 1
+	if self.btnStartTasks then
+		self.btnStartTasks:setPos(usable - self.btnStartTasks.width + 1, self.actionRow)
+	end
+	if self.lblHint then self.lblHint:setPos(L.padX, self.hintRow) end
+end
+
 function TaskGroupSelector:initialize()
 	
 	self.taskGroup = self.taskManager:createGroup()
-	
-	self.frm = Frame:new("new group - "..string.sub(self.taskGroup.id,1,4), 1,1,self.width,self.height,default.borderColor)
-	
-	local sx, sy = 41, 3
-	self.lblGroupSizeTxt = Label:new("group size", sx, sy)
-	self.btnDecreaseSize = Button:new("-",sx+2,sy+2,1,1)
-	self.lblGroupSize = Label:new(self.taskGroup.groupSize,sx+4,sy+2)
-	self.btnIncreaseSize = Button:new("+",sx+7,sy+2,1,1)
-	
+
+	-- LABENHANCED_NEWGROUP_HMI
+	-- The task field ends on the same column as the "top" button's right edge,
+	-- derived from that button rather than hardcoded, so the caret keeps its
+	-- alignment if the AREA button row is ever rearranged.
+	self.btnTopX = L.padX + 15
+	self.btnTopW = 5
+	self.taskFieldW = (self.btnTopX + self.btnTopW - 1) - L.padX + 1
+
+	self.spinMinusX = L.padX + L.turtW + 1
+	self.spinPlusX = self.spinMinusX + L.spinW + 1
+
+
+	-- LABENHANCED_NEWGROUP_HMI
+	-- Header strip instead of a titled Frame. The Window already draws one
+	-- border; a Frame inside it was a second box around the same panel.
+	self.boxHeader = Box:new(1, L.headerRow, self.width, 1, ui.plate)
+	self.lblTitle = Label:new("NEW GROUP", 2, L.headerRow, ui.value, ui.plate)
+	-- LABENHANCED_NEWGROUP_HMI
+	-- The header's right slot carries live state, as on the Groups page. A
+	-- truncated internal id was nothing you could act on - and on cancel it is
+	-- discarded and never seen again. The size of the selection is the number
+	-- that actually decides whether this job is sane.
+	self.lblAreaSize = Label:new("", 14, L.headerRow, ui.caption, ui.plate)
+	self:addObject(self.boxHeader)
+	self:addObject(self.lblTitle)
+	self:addObject(self.lblAreaSize)
+
+	-- ---- AREA -------------------------------------------------------------
+	self.lblAreaCap = Label:new("AREA", L.padX, L.areaCapRow, ui.caption)
+	self:addObject(self.lblAreaCap)
+
+	self.boxArea = Box:new(L.areaX, L.areaTop, L.areaW, L.areaRows, ui.plate)
+	self:addObject(self.boxArea)
+
+	self.lblFromCap = Label:new("FROM", L.fromEnd - 3, L.areaTop, ui.caption, ui.plate)
+	self.lblToCap   = Label:new("TO",   L.toEnd - 1,   L.areaTop, ui.caption, ui.plate)
+	self:addObject(self.lblFromCap)
+	self:addObject(self.lblToCap)
+
+	local ay = L.areaTop + 1
+	self.lblXAxis = Label:new("X", L.axisX, ay,   ui.caption, ui.plate)
+	self.lblYAxis = Label:new("Y", L.axisX, ay+1, ui.caption, ui.plate)
+	self.lblZAxis = Label:new("Z", L.axisX, ay+2, ui.caption, ui.plate)
+	self.lblXStart = Label:new("-", L.axisX+2, ay,   ui.value, ui.plate)
+	self.lblYStart = Label:new("-", L.axisX+2, ay+1, ui.value, ui.plate)
+	self.lblZStart = Label:new("-", L.axisX+2, ay+2, ui.value, ui.plate)
+	self.lblXFinish = Label:new("-", L.fromEnd+1, ay,   ui.value, ui.plate)
+	self.lblYFinish = Label:new("-", L.fromEnd+1, ay+1, ui.value, ui.plate)
+	self.lblZFinish = Label:new("-", L.fromEnd+1, ay+2, ui.value, ui.plate)
+	for _,o in ipairs{self.lblXAxis,self.lblYAxis,self.lblZAxis,
+		self.lblXStart,self.lblYStart,self.lblZStart,
+		self.lblXFinish,self.lblYFinish,self.lblZFinish} do self:addObject(o) end
+
+	self.btnSelectArea = Button:new("select area", L.padX, L.areaBtnRow, 14, 1, ui.control)
+	self.btnFromTop    = Button:new("top",    self.btnTopX, L.areaBtnRow, self.btnTopW, 1, ui.control)
+	self.btnToBottom   = Button:new("bottom", L.padX+21, L.areaBtnRow, 8, 1, ui.control)
+	self.btnSplitArea  = Button:new("split",  L.padX+30, L.areaBtnRow, 7, 1, ui.control)
+	for _,b in ipairs{self.btnSelectArea,self.btnFromTop,self.btnToBottom,self.btnSplitArea} do
+		b:setTextColor(ui.controlText)
+		self:addObject(b)
+	end
+	self.btnSelectArea.click = function() self:selectArea() end
+	self.btnFromTop.click    = function() self:setFromTop() end
+	self.btnToBottom.click   = function() self:setToBottom() end
+	self.btnSplitArea.click  = function() self:splitArea() end
+
+	-- ---- TASK -------------------------------------------------------------
+	self.lblTaskCap = Label:new("TASK", L.padX, L.taskCapRow, ui.caption)
+	self:addObject(self.lblTaskCap)
+	-- The field itself is the control: the whole plate is clickable and carries a
+	-- darkened caret well at its right end, instead of a separate "select task"
+	-- button sitting beside a plate that looked like a read-only value.
+	-- Its right edge sits under the spinner's "+" so the two align.
+	self.btnSelectTask = Button:new("", L.padX, L.taskRow, self.taskFieldW, 1, ui.plate)
+	self.btnSelectTask.click = function() return self:selectTask() end
+	self:addObject(self.btnSelectTask)
+
+	-- label drawn over the field (added later, so it paints on top)
+	self.lblTask = Label:new(self.taskName, L.padX+2, L.taskRow, ui.value, ui.plate)
+	self:addObject(self.lblTask)
+
+	-- \31 is CraftOS's down triangle, the same glyph the scrollbar uses
+	-- Flush with the plate's right edge. A DARKER well is not possible here: the
+	-- only tone below the plate's gray is the panel background itself, so a black
+	-- well merged into it and read as the plate stopping short with a triangle
+	-- floating beside it. Lighter reads as a recess and matches every other
+	-- control on the panel - light block, dark glyph.
+	self.btnTaskCaret = Button:new("\31", L.padX + self.taskFieldW - L.caretW, L.taskRow,
+		L.caretW, 1, ui.caret)
+	self.btnTaskCaret:setTextColor(ui.caretGlyph)
+	self.btnTaskCaret.click = function() return self:selectTask() end
+	self:addObject(self.btnTaskCaret)
+
+	-- ---- TURTLES ----------------------------------------------------------
+	self.lblGroupSizeTxt = Label:new("TURTLES", L.padX, L.turtCapRow, ui.caption)
+	self:addObject(self.lblGroupSizeTxt)
+	self.boxTurt = Box:new(L.padX, L.turtRow, L.turtW, 1, ui.plate)
+	self:addObject(self.boxTurt)
+	self.lblGroupSize = Label:new(self.taskGroup.groupSize, L.padX+5, L.turtRow, ui.value, ui.plate)
+	self:addObject(self.lblGroupSize)
+	-- spinner, matching the map screen's zoom control
+	self.btnDecreaseSize = Button:new("-", self.spinMinusX, L.turtRow, L.spinW, 1, ui.control)
+	self.btnIncreaseSize = Button:new("+", self.spinPlusX, L.turtRow, L.spinW, 1, ui.control)
+	for _,b in ipairs{self.btnDecreaseSize,self.btnIncreaseSize} do
+		b:setTextColor(ui.controlText)
+		self:addObject(b)
+	end
 	self.btnIncreaseSize.click = function() self:changeGroupSize(1) end
 	self.btnDecreaseSize.click = function() self:changeGroupSize(-1) end
-	
-	sx, sy = 25, 3
-	self.btnSelectTask = Button:new("select task", sx,sy+3,13,1)
-	self.lblTask = Label:new(self.taskName, sx, sy+1)
-	self.btnSelectTask.click = function() return self:selectTask() end
 
-	self.btnSelectArea = Button:new("select area", 6,3,14,1)
-	self.btnSelectArea.click = function() self:selectArea() end
-	
-	
-	self.lblAreaStart = Label:new("start  ",3,13)
-	self.lblAreaEnd = Label:new("end    ", 3, 14)
-
-	sx, sy = 3, 5
-	self.lblXStart = Label:new("X   " .. "-",sx,sy)
-	self.lblYStart = Label:new("Y   " .. "-",sx,sy+1)
-	self.lblZStart = Label:new("Z   " .. "-",sx,sy+2)
-	
-	self.lblXFinish = Label:new("-",sx+12,sy)
-	self.lblYFinish = Label:new("-",sx+12,sy+1)
-	self.lblZFinish = Label:new("-",sx+12,sy+2)
-	
-	
-	self.btnFromTop = Button:new("top",sx+3,sy+4,6,1 )
-	self.btnToBottom = Button:new("bottom", sx+11,sy+4,6,1)
-	self.btnFromTop.click = function() self:setFromTop() end
-	self.btnToBottom.click = function() self:setToBottom() end
-	
-	self.btnSplitArea = Button:new("split area", 3,19,14)
-	self.btnSplitArea.click = function() self:splitArea() end
-	
-	self.btnStartTasks = Button:new("start", 42,9,8,1)
+	-- ---- action bar -------------------------------------------------------
+	self.lblHint = Label:new("", L.padX, 1, ui.hint)
+	self:addObject(self.lblHint)
+	-- LABENHANCED_NEWGROUP_HMI
+	-- 13 wide, not 10: the commit action was the narrowest control on the panel,
+	-- smaller than "select area" (14) and "select task" (13). 13 also centres a
+	-- 5-character label exactly - Button splits the slack with floor(), so an
+	-- even width left START one cell off-centre (2 left, 3 right).
+	self.btnStartTasks = Button:new("START", 1, 1, 13, 1, ui.go)
+	self.btnStartTasks:setTextColor(ui.controlText)
+	self.btnStartTasks.disabledColor = ui.dead
 	self.btnStartTasks.click = function() self:startTasks() end
 	self.btnStartTasks:setEnabled(false)
-	
-	--self:removeObject(self.btnClose)
-	self:addObject(self.frm)
-	--self:addObject(self.btnClose)
-	
-	
-	self:addObject(self.lblXStart)
-	self:addObject(self.lblYStart)
-	self:addObject(self.lblZStart)
-	self:addObject(self.lblXFinish)
-	self:addObject(self.lblYFinish)
-	self:addObject(self.lblZFinish)
-	
-	self:addObject(self.lblGroupSizeTxt)
-	self:addObject(self.lblGroupSize)
-	--self:addObject(self.lblAreaStart)
-	--self:addObject(self.lblAreaEnd)
-
-	self:addObject(self.btnSelectTask)
-	self:addObject(self.lblTask)
-	
-	self:addObject(self.btnIncreaseSize)
-	self:addObject(self.btnDecreaseSize)
-	self:addObject(self.btnSelectArea)
-	self:addObject(self.btnSplitArea) -- testing
 	self:addObject(self.btnStartTasks)
-	self:addObject(self.btnFromTop)
-	self:addObject(self.btnToBottom)
+
+
+	self:layoutPanel()
 end
 
 function TaskGroupSelector:getTaskGroup()
@@ -150,50 +312,78 @@ function TaskGroupSelector:changeGroupSize(increment)
 end
 
 function TaskGroupSelector:refreshPos()
-	if self.positions and self.positions[1] then
-		--self.lblAreaStart:setText("start  "..self.positions[1].x.." "..self.positions[1].y.." "..self.positions[1].z )
-		self.lblXStart:setText("X   " .. self.positions[1].x)
-		self.lblYStart:setText("Y   " .. self.positions[1].y)
-		self.lblZStart:setText("Z   " .. self.positions[1].z)
-	else
-		self.lblXStart:setText("X   -")
-		self.lblYStart:setText("Y   -")
-		self.lblZStart:setText("Z   -")
-	end
-	if self.positions and self.positions[2] then
-		self.lblAreaEnd:setText("end    "..self.positions[2].x.." "..self.positions[2].y.." "..self.positions[2].z )
-		self.lblXFinish:setText(self.positions[2].x)
-		self.lblYFinish:setText(self.positions[2].y)
-		self.lblZFinish:setText(self.positions[2].z)
-	else
-		self.lblXFinish:setText("-")
-		self.lblYFinish:setText("-")
-		self.lblZFinish:setText("-")
-	end
+	-- Values right-aligned into fixed fields so digits do not jump as the
+	-- selection is dragged around the map.
+	local startW  = L.fromEnd - (L.axisX + 2) + 1
+	local finishW = L.toEnd - (L.fromEnd + 1) + 1
+	local p1 = self.positions and self.positions[1]
+	local p2 = self.positions and self.positions[2]
+
+	self.lblXStart:setText(padLeft(p1 and p1.x or "-", startW))
+	self.lblYStart:setText(padLeft(p1 and p1.y or "-", startW))
+	self.lblZStart:setText(padLeft(p1 and p1.z or "-", startW))
+	self.lblXFinish:setText(padLeft(p2 and p2.x or "-", finishW))
+	self.lblYFinish:setText(padLeft(p2 and p2.y or "-", finishW))
+	self.lblZFinish:setText(padLeft(p2 and p2.z or "-", finishW))
 end
-function TaskGroupSelector:refresh()
-	self.lblGroupSize:setText(self.taskGroup.groupSize)
-	self:refreshPos()
-	if self.positions and #self.positions == 2 and self.taskName then
-		self.btnStartTasks:setEnabled(true)
-	else
-		self.btnStartTasks:setEnabled(false)
+function TaskGroupSelector:layoutAreaSize(usable)
+	if not self.lblAreaSize then return end
+	usable = usable or self:usableWidth()
+	local text = self.lblAreaSize:getText()
+	-- one column clear of the close button: red is visually heavy butted up
+	self.lblAreaSize:setPos(math.max(13, usable - #text), L.headerRow)
+end
+
+function TaskGroupSelector:areaSizeText()
+	local p1 = self.positions and self.positions[1]
+	local p2 = self.positions and self.positions[2]
+	if not (p1 and p2) then return "no area" end
+	local dx = math.abs(p1.x - p2.x) + 1
+	local dy = math.abs(p1.y - p2.y) + 1
+	local dz = math.abs(p1.z - p2.z) + 1
+	local dims = string.format("%dx%dx%d", dx, dy, dz)
+	-- Block counts get astronomical for a sloppy selection; only add the total
+	-- when it is short enough to be worth reading.
+	local total = dx * dy * dz
+	if total <= 9999999 then
+		return dims .. "  " .. total .. " blk"
 	end
+	return dims
+end
+
+function TaskGroupSelector:refresh()
+	self.lblGroupSize:setText(padLeft(self.taskGroup.groupSize, 2))
+	self:refreshPos()
+	self.lblAreaSize:setText(self:areaSizeText())
+	self:layoutAreaSize()
+
+	local hasArea = self.positions and #self.positions == 2
+	local ready = hasArea and self.taskName ~= nil
+
+	-- LABENHANCED_NEWGROUP_HMI
+	-- Say what is still missing rather than leaving a dead button unexplained.
+	if ready then
+		self.lblHint:setText("ready to start")
+		self.lblHint:setTextColor(ui.go)
+	elseif not hasArea then
+		self.lblHint:setText("select an area to continue")
+		self.lblHint:setTextColor(ui.hint)
+	else
+		self.lblHint:setText("select a task to continue")
+		self.lblHint:setTextColor(ui.hint)
+	end
+
+	self.btnStartTasks:setEnabled(ready)
+	-- Box draws a border whenever borderColor differs from the background, and
+	-- setEnabled only swaps the background - keep them in step.
+	self.btnStartTasks:setBorderColor(self.btnStartTasks.backgroundColor)
 end
 
 function TaskGroupSelector:redraw() -- super override
 	self:refresh()
-	
+
 	Window.redraw(self) -- super
-	
-	for i=3,9 do
-		self:setCursorPos(23,i)
-		self:blit("|",colors.toBlit(colors.lightGray),colors.toBlit(self.backgroundColor))
-	end
-	for i=3,9 do
-		self:setCursorPos(39,i)
-		self:blit("|",colors.toBlit(colors.lightGray),colors.toBlit(self.backgroundColor))
-	end
+
 end
 
 function TaskGroupSelector:splitArea()
@@ -226,12 +416,31 @@ function TaskGroupSelector:startTasks()
 	self:splitArea()
 	self.taskGroup:start()
 
+	self.started = true   -- so close() does not delete the group it just started
 	self:close()
 end
 
 function TaskGroupSelector:close()
 	self:clearAreaPreview()
+	self:discardDraftGroup()
+	if self.closeOwner and self.closeOwner.addObjectInternal then
+		self.closeOwner:addObjectInternal(self.closeOwner.btnClose)
+		self.closeOwner = nil
+	end
 	return Window.close(self)
+end
+
+function TaskGroupSelector:discardDraftGroup()
+	-- LABENHANCED_NEWGROUP_HMI
+	-- initialize() calls taskManager:createGroup(), so merely opening this dialog
+	-- registers a group. Nothing removed it again, so every cancelled draft was
+	-- left in taskManager.groups forever - invisible, because the list filters
+	-- status "new". Drop it unless the group was actually started.
+	if self.started then return end
+	local g = self.taskGroup
+	if g and g.getStatus and g:getStatus() == "new" and g.delete then
+		g:delete()
+	end
 end
 
 
@@ -642,7 +851,15 @@ end
 function TaskGroupSelector:selectTask()
 	local choices = {"mineArea", "excavateArea"}
 	
-	self.choiceSelector = ChoiceSelector:new(self.btnSelectTask.x,self.btnSelectTask.y-4,16,6,choices)
+	-- LABENHANCED_NEWGROUP_HMI
+	-- The menu is added to self.parent, so it must be positioned in PARENT
+	-- coordinates. Using the field's local x/y only worked while this panel sat
+	-- at 1,1; once it was centred the menu landed off the panel entirely.
+	-- Hung directly under the field so it reads as that field's dropdown.
+	self.choiceSelector = ChoiceSelector:new(
+		self.x + self.btnSelectTask.x - 1,
+		self.y + self.btnSelectTask.y,
+		16, 6, choices)
 	self.choiceSelector.onChoiceSelected = function(choice) 
 		self.taskName = choice
 		self.lblTask:setText(self.taskName)
