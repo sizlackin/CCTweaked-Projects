@@ -568,6 +568,14 @@ function TunnelMap:findNearestFrontier(startPos,opts)
 			local node = self.nodes[cur.key]
 			local baseCost = cost[cur.key] or math.huge
 
+			-- Maximum frontier-only bonus is 18 (branch 9 + rescue 5 + age 4).
+			-- Because this is Dijkstra-ordered, once we're farther than that
+			-- behind the current best score, no later frontier can beat it.
+			-- This keeps four simultaneous mappers responsive on large graphs.
+			if best and baseCost > best.score + 18 then
+				break
+			end
+
 			if withinRadius(pos,opts.origin,opts.radius) then
 				for _,dir in ipairs(dirOrder) do
 					local conn = self:getConnection(node,dir)
