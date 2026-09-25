@@ -439,14 +439,21 @@ function TaskGroupSelector:showAreaPreview()
 end
 
 function TaskGroupSelector:deselectArea()
-	-- Exit edit mode but KEEP pos1/pos2 and the visualization. This lets normal
-	-- map clicks pan/recenter again without accidentally moving pos2.
+	-- DESELECT means discard the current WorldEdit selection and leave edit
+	-- mode. Remove the red outline/anchors and the selection controls so the
+	-- map immediately returns to normal interaction.
 	self.selectionMode = false
 	if self.mapDisplay then
 		self.mapDisplay.doSelectPosition = false
 	end
-	self:showAreaControls()
-	if self.mapDisplay then self.mapDisplay:redraw() end
+	self.positions = {}
+	self:clearSelectionOverlay()
+	self:clearAreaControls()
+	self:refresh()
+	if self.mapDisplay then
+		self.mapDisplay.fullRedraw = true
+		self.mapDisplay:redraw()
+	end
 end
 
 function TaskGroupSelector:reselectArea()
