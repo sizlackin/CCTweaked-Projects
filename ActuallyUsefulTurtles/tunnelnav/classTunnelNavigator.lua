@@ -255,14 +255,20 @@ function Navigator:moveAdjacent(target)
 end
 
 function Navigator:followPath(path)
+	-- LABENHANCED_NO_ROUTE_RESCAN
+	-- This path came from the controller's authoritative tunnel graph, so do
+	-- not make Miner re-publish every OPEN edge while simply travelling it.
+	self.miner.traversingKnownTunnelRoute = true
 	for i=1,#path do
 		local p = path[i]
 		local ok,reason,name = self:moveAdjacent(vector.new(p.x,p.y,p.z))
 		if not ok then
+			self.miner.traversingKnownTunnelRoute = false
 			return false,i,reason,name
 		end
 		if i % 32 == 0 then sleep(0) end
 	end
+	self.miner.traversingKnownTunnelRoute = false
 	return true
 end
 
