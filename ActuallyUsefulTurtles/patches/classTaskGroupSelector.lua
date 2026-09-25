@@ -411,6 +411,7 @@ function TaskGroupSelector:updateAreaPreview()
 			start = vector.new(p1.x,p1.y,p1.z),
 			finish = vector.new(p1.x,p1.y,p1.z),
 			color = colors.green,
+			selectionAnchor = true,
 			areaPreviewOwner = self,
 		}
 		table.insert(self.mapDisplay.areas, self.selectionPos1Preview)
@@ -421,6 +422,7 @@ function TaskGroupSelector:updateAreaPreview()
 			start = vector.new(p2.x,p2.y,p2.z),
 			finish = vector.new(p2.x,p2.y,p2.z),
 			color = colors.magenta,
+			selectionAnchor = true,
 			areaPreviewOwner = self,
 		}
 		table.insert(self.mapDisplay.areas, self.selectionPos2Preview)
