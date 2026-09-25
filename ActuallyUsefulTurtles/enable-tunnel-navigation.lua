@@ -5,8 +5,8 @@ if turtle then error("Run this on the main controller, not a turtle.",0) end
 
 local files = {
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/699e11283b6eeb18e0a5984096964cc3c5ba9e93/ActuallyUsefulTurtles/tunnelnav/classTunnelMap.lua",
-		marker="LABENHANCED_MULTI_MAPPER_CLAIMS",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/b06454712209f1284dd7040602dd0b1b3280260e/ActuallyUsefulTurtles/tunnelnav/classTunnelMap.lua",
+		marker="LABENHANCED_TORCH_REROUTE",
 		targets={"general/classTunnelMap.lua","runtime/classTunnelMap.lua"},
 	},
 	{
@@ -15,13 +15,13 @@ local files = {
 		targets={"turtle/classTunnelNavigator.lua"},
 	},
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/ffe35ca50e3997684008176c0db1ea5031ceb95a/ActuallyUsefulTurtles/tunnelnav/classTunnelMapper.lua",
-		marker="LABENHANCED_MULTI_MAPPER_CLAIMS",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/4e19fb91120b1dc27b89066148a0933bf67900fe/ActuallyUsefulTurtles/tunnelnav/classTunnelMapper.lua",
+		marker="LABENHANCED_TORCH_REROUTE",
 		targets={"turtle/classTunnelMapper.lua"},
 	},
 	{
-		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/ea3b1e6c34f0a7c5c7dbe99fe6401e1d230d6169/ActuallyUsefulTurtles/patches/classMiner.lua",
-		marker="LABENHANCED_TUNNEL_NAV",
+		url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/f240140e06b3bd541bb53181c4e3266243f2a90c/ActuallyUsefulTurtles/patches/classMiner.lua",
+		marker="LABENHANCED_TORCH_REROUTE",
 		targets={"turtle/classMiner.lua"},
 	},
 	{
