@@ -313,13 +313,19 @@ function TaskGroupSelector:layoutAreaControls()
 
 	local deselectWidth = 10
 	local confirmWidth = 10
-	local buttonGap = 1
-	local controlsWidth = deselectWidth + buttonGap + confirmWidth
+	-- Mirror the outer gaps: DESELECT sits the same distance to the right of
+	-- the blue UP control as CONFIRM sits to the left of the red X control.
+	-- Any remaining space becomes the larger gap between the two buttons.
+	local outerGap = 1
 	local controlsLeft = self.mapDisplay.btnUp.x + self.mapDisplay.btnUp.width
 	local controlsRight = self.mapDisplay.btnClose.x - 1
-	local availableWidth = controlsRight - controlsLeft + 1
-	local deselectX = controlsLeft + math.floor((availableWidth - controlsWidth) / 2)
-	local confirmX = deselectX + deselectWidth + buttonGap
+	local deselectX = controlsLeft + outerGap
+	local confirmX = controlsRight - outerGap - confirmWidth + 1
+
+	-- Narrow displays may not have enough room for the mirrored layout.
+	if confirmX <= deselectX + deselectWidth then
+		confirmX = deselectX + deselectWidth + 1
+	end
 
 	return deselectX, confirmX, 2
 end
