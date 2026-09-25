@@ -112,6 +112,13 @@ local function isInventoryBlock(id)
     return inventoryBlocks[id] == true or isSophisticatedStorageChest(id)
 end
 
+local function isTurtleBlockId(id)
+	-- LABENHANCED_MINING_ROUTE_BRIDGE
+	return id == "computercraft:turtle_advanced"
+		or id == "computercraft:turtle_normal"
+		or id == "computercraft:turtle"
+end
+
 local disallowedBlocks = {
 ["minecraft:chest"] = true,
 ["minecraft:hopper"]=true,
@@ -1826,6 +1833,18 @@ function Miner:digMove(safe)
 				self:dig()
 				sleep(0.25)
 				--print("digMove", checkSafe(blockName), blockName)
+			elseif isTurtleBlockId(blockName) then
+				-- LABENHANCED_MINING_ROUTE_BRIDGE
+				-- Never mine the teammate. Give short-lived traffic time to
+				-- clear before declaring the connector impossible.
+				print("TURTLE TRAFFIC IN MINE ACCESS - WAITING")
+				sleep(0.75)
+				ct = ct + 8
+				if ct > 96 then
+					print("TURTLE TRAFFIC DID NOT CLEAR")
+					result = false
+					break
+				end
 			else
 				print("NOT SAFE",blockName)
 				result = false -- return false
@@ -2022,36 +2041,49 @@ function Miner:moveNoDigToAdjacent(target)
 	local dx = target.x - self.pos.x
 	local dy = target.y - self.pos.y
 	local dz = target.z - self.pos.z
-	if math.abs(dx) + math.abs(dy) + math.abs(dz) ~= 1 then return false end
+	if math.abs(dx) + math.abs(dy) + math.abs(dz) ~= 1 then
+		return false,"not_adjacent"
+	end
 
+	-- LABENHANCED_MINING_ROUTE_BRIDGE
+	-- Use Miner movement wrappers, not raw turtle movement. That means every
+	-- successful known-air traversal is also learned by the shared TunnelMap.
 	local ok = false
 	if dy > 0 then
-		ok = turtle.up()
-		if not ok then
-			local hasBlock, data = turtle.inspectUp()
-			self:setMapValue(target.x,target.y,target.z,(hasBlock and data and data.name) or 0)
-		end
+		ok = self:up()
 	elseif dy < 0 then
-		ok = turtle.down()
-		if not ok then
-			local hasBlock, data = turtle.inspectDown()
-			self:setMapValue(target.x,target.y,target.z,(hasBlock and data and data.name) or 0)
-		end
+		ok = self:down()
 	else
 		self:turnToPos(target.x,target.y,target.z)
-		ok = turtle.forward()
-		if not ok then
-			local hasBlock, data = turtle.inspect()
-			self:setMapValue(target.x,target.y,target.z,(hasBlock and data and data.name) or 0)
-		end
+		ok = self:forward()
 	end
 
 	if ok then
 		self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
-		self.pos = vector.new(target.x,target.y,target.z)
-		self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+		return true
 	end
-	return ok
+
+	local hasBlock,data
+	if dy > 0 then
+		hasBlock,data = turtle.inspectUp()
+	elseif dy < 0 then
+		hasBlock,data = turtle.inspectDown()
+	else
+		hasBlock,data = turtle.inspect()
+	end
+
+	local name = hasBlock and data and data.name or nil
+	if isTurtleBlockId(name) then
+		-- A turtle is traffic, not terrain. Do not write it permanently into
+		-- the physical map or the next path search will think the tunnel closed.
+		return false,"traffic",name
+	end
+
+	self:setMapValue(
+		target.x,target.y,target.z,
+		(hasBlock and name) or 0
+	)
+	return false,hasBlock and "blocked" or "transient",name
 end
 
 function Miner:placeCobbledDeepslateAt(target)
@@ -2148,13 +2180,24 @@ function Miner:navigateKnownAirBootstrap(x,y,z)
 			result = true
 			for i=1,#path do
 				local step = path[i]
-				if step.pos ~= self.pos and not self:moveNoDigToAdjacent(step.pos) then
-					print("OPEN PATH BLOCKED - REFUSING TO DIG")
-					result = false
-					break
+				if step.pos ~= self.pos then
+					local moved,moveReason = self:moveNoDigToAdjacent(step.pos)
+					if not moved then
+						if moveReason == "traffic" then
+							print("OPEN PATH TURTLE TRAFFIC - WAITING")
+							sleep(0.75)
+						else
+							print("OPEN PATH BLOCKED - REFUSING TO DIG")
+						end
+						result = false
+						break
+					end
 				end
 			end
-			if result and self.pos == goal then break end
+			if result and self.pos == goal then
+				if self.flushTunnelUpdatesSync then self:flushTunnelUpdatesSync() end
+				break
+			end
 		end
 	end
 
@@ -2172,12 +2215,20 @@ function Miner:navigateOpenPathToPos(x,y,z)
 		local ok,reason,stats = self.tunnelNavigator:navigateTo(goal)
 		if ok then return true end
 
-		-- Bootstrap compatibility only: before the first tunnel survey, the
-		-- authoritative graph has zero road nodes. The previous map A* is still
-		-- strictly no-dig, so it is safe to use until a road graph exists.
-		if stats and stats.nodes == 0 then
-			print("TUNNEL GRAPH EMPTY - USING KNOWN-AIR BOOTSTRAP")
-			return self:navigateKnownAirBootstrap(x,y,z)
+		-- LABENHANCED_MINING_ROUTE_BRIDGE
+		-- The logical road graph can legitimately lag behind the older physical
+		-- ChunkyMap, especially when starting a new mining area. If the target
+		-- is already known-open, use the strict no-dig known-air path as a bridge.
+		-- moveNoDigToAdjacent records every successful step back into TunnelMap.
+		local goalKnownOpen = self:getMapValue(goal.x,goal.y,goal.z) == 0
+		if (stats and stats.nodes == 0) or goalKnownOpen then
+			if stats and stats.nodes == 0 then
+				print("TUNNEL GRAPH EMPTY - USING KNOWN-AIR BOOTSTRAP")
+			else
+				print("TUNNEL GRAPH MISSING KNOWN-AIR ROUTE - BRIDGING")
+			end
+			local bridged = self:navigateKnownAirBootstrap(x,y,z)
+			if bridged then return true end
 		end
 
 		print("NO VALID TUNNEL ROUTE - REFUSING TO DIG")
@@ -2695,12 +2746,17 @@ local function accessPosKey(x,y,z)
 	return x .. "," .. y .. "," .. z
 end
 
-function Miner:followExistingTunnelToward(target)
+function Miner:followExistingTunnelToward(target,trafficAvoid,replanDepth)
 	if not target then return false end
 	if self.pos == target then return true end
+	trafficAvoid = trafficAvoid or {}
+	replanDepth = replanDepth or 0
 
 	-- Breadth-first walk over KNOWN AIR only. Besides being safe, this gives us
 	-- the reachable existing tunnel point closest to the new mining entrance.
+	-- LABENHANCED_MINING_ROUTE_BRIDGE: traffic cells are locally excluded so a
+	-- mining leader can choose another existing branch instead of immediately
+	-- trying to drill through a turtle.
 	local queue = { vector.new(self.pos.x,self.pos.y,self.pos.z) }
 	local head = 1
 	local visited = {}
@@ -2711,7 +2767,9 @@ function Miner:followExistingTunnelToward(target)
 	positions[startKey] = queue[1]
 
 	local bestKey = startKey
-	local bestScore = math.abs(self.pos.x-target.x) + math.abs(self.pos.z-target.z) + math.abs(self.pos.y-target.y) * 6
+	local bestScore = math.abs(self.pos.x-target.x)
+		+ math.abs(self.pos.z-target.z)
+		+ math.abs(self.pos.y-target.y) * 6
 	local bestSteps = 0
 	local steps = {[startKey]=0}
 	local maxNodes = 12000
@@ -2729,7 +2787,9 @@ function Miner:followExistingTunnelToward(target)
 		local pk = accessPosKey(p.x,p.y,p.z)
 		local psteps = steps[pk] or 0
 
-		local score = math.abs(p.x-target.x) + math.abs(p.z-target.z) + math.abs(p.y-target.y) * 6
+		local score = math.abs(p.x-target.x)
+			+ math.abs(p.z-target.z)
+			+ math.abs(p.y-target.y) * 6
 		if score < bestScore or (score == bestScore and psteps < bestSteps) then
 			bestScore = score
 			bestKey = pk
@@ -2743,10 +2803,8 @@ function Miner:followExistingTunnelToward(target)
 		for _,d in ipairs(dirs) do
 			local n = p + d
 			local nk = accessPosKey(n.x,n.y,n.z)
-			if not visited[nk] then
+			if not visited[nk] and not trafficAvoid[nk] then
 				visited[nk] = true
-				-- Existing-path travel is intentionally strict: only cells
-				-- already known by the map to be open air are traversable.
 				if self:getMapValue(n.x,n.y,n.z) == 0 then
 					previous[nk] = pk
 					positions[nk] = n
@@ -2771,11 +2829,23 @@ function Miner:followExistingTunnelToward(target)
 	end
 
 	for i=#reverse,1,-1 do
-		if not self:moveNoDigToAdjacent(reverse[i]) then
+		local moved,moveReason = self:moveNoDigToAdjacent(reverse[i])
+		if not moved then
+			if moveReason == "traffic" and replanDepth < 6 then
+				local blocked = reverse[i]
+				trafficAvoid[accessPosKey(blocked.x,blocked.y,blocked.z)] = true
+				print("EXISTING ACCESS TURTLE TRAFFIC - REPLANNING")
+				sleep(0.5)
+				return self:followExistingTunnelToward(
+					target,trafficAvoid,replanDepth+1
+				)
+			end
 			print("EXISTING ACCESS PATH BLOCKED")
 			return false
 		end
 	end
+
+	if self.flushTunnelUpdatesSync then self:flushTunnelUpdatesSync() end
 	return true
 end
 
