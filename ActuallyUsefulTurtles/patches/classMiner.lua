@@ -1308,6 +1308,11 @@ end
 
 function Miner:recordTunnelTraversal(fromPos,toPos)
 	if not fromPos or not toPos then return end
+	-- LABENHANCED_NO_ROUTE_RESCAN
+	-- A controller-issued tunnel route is already authoritative. Traversing it
+	-- should not re-report every known OPEN edge as though it were being mapped
+	-- again. Newly dug/bootstrap/yield movement still records normally.
+	if self.traversingKnownTunnelRoute then return end
 	local dir = TunnelMap.directionBetween(fromPos,toPos)
 	if dir then
 		self:queueTunnelUpdate(fromPos,dir,TunnelMap.STATE.OPEN)
@@ -3057,6 +3062,15 @@ function Miner:mineArea(start, finish)
 	
 	if taskState.stage == 1 then
 
+		-- Keep the controller-assigned stripe bounds intact. Shared mining uses
+		-- these later so each turtle can start directly on its shared-spine corner
+		-- instead of carving a private connector to a recomputed nearest corner.
+		local assignedBounds = {
+			minX=math.min(start.x,finish.x), maxX=math.max(start.x,finish.x),
+			minY=math.min(start.y,finish.y), maxY=math.max(start.y,finish.y),
+			minZ=math.min(start.z,finish.z), maxZ=math.max(start.z,finish.z),
+		}
+
 		local orientation
 		start, finish, orientation = self:getAreaStart(start, finish)
 		
@@ -3115,29 +3129,43 @@ function Miner:mineArea(start, finish)
 				reachedArea = self:navigateOpenPathToPos((accessEntry or sharedEntry).x,(accessEntry or sharedEntry).y,(accessEntry or sharedEntry).z)
 			end
 
-			-- Once at the paired entrance, getAreaStart will naturally choose
-			-- the nearest corner of this turtle's assigned stripe. If the exact
-			-- stripe start is not open yet, create only the small in-box 1x2
-			-- connection from the shared entrance.
+			-- LABENHANCED_NO_PRIVATE_STRIPE_CONNECTOR
+			-- The shared access spine now lands on an actual corner of every
+			-- assigned stripe. Start mining from THAT corner. Never carve a
+			-- turtle-specific connector from the shared road to some other start.
 			if reachedArea then
-				start, finish, orientation = self:getAreaStart(start,finish)
+				local entry = accessEntry or sharedEntry
+				local b = assignedBounds
+				local onXEdge = entry and (entry.x == b.minX or entry.x == b.maxX)
+				local onZEdge = entry and (entry.z == b.minZ or entry.z == b.maxZ)
 
-				-- LABENHANCED_COOP_STRIPE_ORIENTATION
-				-- getAreaStart() chooses the nearest corner, but its returned
-				-- orientation can point across the short axis. Re-lock the work
-				-- direction to THIS turtle's stripe long axis so teammates make
-				-- parallel tunnels instead of accidentally entering one another's.
-				local stripeDx = finish.x - start.x
-				local stripeDz = finish.z - start.z
-				if math.abs(stripeDx) >= math.abs(stripeDz) then
-					orientation = (stripeDx >= 0) and 3 or 1
+				if not entry or not onXEdge or not onZEdge then
+					-- Old task groups used midpoint entries. Do not preserve that
+					-- layout by drilling a private shortcut; require a freshly
+					-- created group using corner entries.
+					print("SHARED ENTRY IS NOT A STRIPE CORNER - REFUSING PRIVATE CONNECTOR")
+					reachedArea = false
 				else
-					orientation = (stripeDz >= 0) and 0 or 2
-				end
+					start = vector.new(entry.x,b.minY,entry.z)
+					finish = vector.new(
+						(entry.x == b.minX) and b.maxX or b.minX,
+						b.maxY,
+						(entry.z == b.minZ) and b.maxZ or b.minZ
+					)
 
-				if not sameAccessPos(self.pos,start) then
-					if not self:navigateOpenPathToPos(start.x,start.y,start.z) then
-						reachedArea = self:digNeatAccessTunnelTo(start)
+					local stripeDx = finish.x - start.x
+					local stripeDz = finish.z - start.z
+					if math.abs(stripeDx) >= math.abs(stripeDz) then
+						orientation = (stripeDx >= 0) and 3 or 1
+					else
+						orientation = (stripeDz >= 0) and 0 or 2
+					end
+
+					if not sameAccessPos(self.pos,start) then
+						reachedArea = self:navigateOpenPathToPos(start.x,start.y,start.z)
+						if not reachedArea then
+							print("NO OPEN SHARED ROUTE TO STRIPE START - NOT DIGGING A SHORTCUT")
+						end
 					end
 				end
 			end
