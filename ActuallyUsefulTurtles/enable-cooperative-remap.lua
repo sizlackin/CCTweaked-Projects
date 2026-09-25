@@ -7,7 +7,7 @@ if turtle then error("Run this on the main controller.",0) end
 
 local files = {
   {
-    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/3fa7cd3c3a02432e89dfbd0a6418dd78e81108dc/ActuallyUsefulTurtles/tunnelnav/classTunnelMap.lua",
+    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/e47abe6f0f9874bdc7dff230317b26c29407f898/ActuallyUsefulTurtles/tunnelnav/classTunnelMap.lua",
     marker="LABENHANCED_SMART_FRONTIER_SCORING",
     targets={"general/classTunnelMap.lua","runtime/classTunnelMap.lua"},
   },
