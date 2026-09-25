@@ -327,8 +327,13 @@ end
 function TaskGroupSelector:showAreaControls()
 	if not self.mapDisplay then return end
 
-	-- Keep one set of controls alive for the whole WorldEdit-like selection
-	-- session. DESELECT exits edit mode without discarding the chosen positions.
+	-- No selection yet: neither DESELECT nor CONFIRM should be visible.
+	if not self.positions or #self.positions == 0 then
+		self:clearAreaControls()
+		return
+	end
+
+	-- Keep one set of controls alive while a selection exists.
 	if not self.btnReselectArea then
 		local deselectX, confirmX, controlsY = self:layoutAreaControls()
 		if not deselectX then return end
@@ -440,13 +445,13 @@ end
 
 function TaskGroupSelector:deselectArea()
 	-- DESELECT clears the current WorldEdit selection and immediately starts
-	-- a fresh selection. The next right-click is always POS1 (GREEN), rather
-	-- than returning the map to pan/recenter mode.
+	-- a fresh selection. With no positions set, both action buttons disappear;
+	-- the next right-click creates POS1 and brings DESELECT back.
 	self.positions = {}
 	self:clearSelectionOverlay()
+	self:clearAreaControls()
 	self.selectionMode = true
 	self:refresh()
-	self:showAreaControls()
 	if self.mapDisplay then
 		self.mapDisplay.onPositionSelected = function(objRef,x,y,z)
 			self:onAreaSelected(x,y,z)
@@ -487,7 +492,7 @@ function TaskGroupSelector:selectArea()
 	self.mapDisplay.onPositionSelected = function(objRef,x,y,z) self:onAreaSelected(x,y,z) end
 	self.mapDisplay:selectPosition()
 	self:openMap()
-	self:showAreaControls()
+	-- Controls stay hidden until POS1 exists.
 	self.mapDisplay:redraw()
 end
 
