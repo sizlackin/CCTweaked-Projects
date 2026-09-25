@@ -201,7 +201,7 @@ function TunnelMap:getConnectionState(nodeOrPos,dir)
 	return c and c.state or nil
 end
 
-function TunnelMap:_applyOne(pos,dir,state,seen,blockedUntil,resume)
+function TunnelMap:_applyOne(pos,dir,state,seen,blockedUntil,resume,blockedReason)
 	local d = TunnelMap.DIRS[dir]
 	if not d then return false end
 	seen = seen or now()
@@ -222,12 +222,14 @@ function TunnelMap:_applyOne(pos,dir,state,seen,blockedUntil,resume)
 		or old.state ~= state
 		or old.blockedUntil ~= blockedUntil
 		or old.resume ~= resume
+		or old.blockedReason ~= blockedReason
 
 	node.connections[dir] = {
 		state=state,
 		seen=seen,
 		blockedUntil=blockedUntil,
 		resume=resume,
+		blockedReason=blockedReason, -- LABENHANCED_TORCH_REROUTE
 	}
 	node.lastSeen = math.max(node.lastSeen or 0,seen)
 
@@ -250,7 +252,8 @@ function TunnelMap:_applyOne(pos,dir,state,seen,blockedUntil,resume)
 			if not otherOld or not otherOld.seen or seen >= otherOld.seen then
 				other.connections[opp] = {
 					state=TunnelMap.STATE.TEMPORARILY_BLOCKED,
-					seen=seen,blockedUntil=blockedUntil,resume=resume or TunnelMap.STATE.OPEN
+					seen=seen,blockedUntil=blockedUntil,resume=resume or TunnelMap.STATE.OPEN,
+					blockedReason=blockedReason
 				}
 				changed = true
 			end
@@ -261,7 +264,9 @@ function TunnelMap:_applyOne(pos,dir,state,seen,blockedUntil,resume)
 			local opp = d.opposite
 			local otherOld = other.connections[opp]
 			if otherOld and (not otherOld.seen or seen >= otherOld.seen) then
-				other.connections[opp] = {state=TunnelMap.STATE.BLOCKED,seen=seen}
+				other.connections[opp] = {
+					state=TunnelMap.STATE.BLOCKED,seen=seen,blockedReason=blockedReason
+				}
 				self:_setFrontier(target,opp,false,seen)
 				changed = true
 			end
@@ -281,7 +286,7 @@ function TunnelMap:applyUpdates(updates)
 	for _,u in ipairs(updates) do
 		local p = u.pos or u.position or u.from
 		if p and u.dir and u.state then
-			if self:_applyOne(p,u.dir,u.state,u.seen,u.blockedUntil,u.resume) then
+			if self:_applyOne(p,u.dir,u.state,u.seen,u.blockedUntil,u.resume,u.blockedReason) then
 				changed = changed + 1
 			end
 		end
@@ -298,6 +303,7 @@ function TunnelMap:makeUpdate(pos,dir,state,opts)
 		seen=opts.seen or now(),
 		blockedUntil=opts.blockedUntil,
 		resume=opts.resume,
+		blockedReason=opts.blockedReason,
 	}
 end
 
