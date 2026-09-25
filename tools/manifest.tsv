@@ -57,7 +57,7 @@ ActuallyUsefulTurtles/controller/gui/classScrollBar.lua	gui/classScrollBar.lua	v
 ActuallyUsefulTurtles/controller/gui/classStorageDisplay.lua	gui/classStorageDisplay.lua	vendor
 ActuallyUsefulTurtles/controller/gui/classStorageItemControl.lua	gui/classStorageItemControl.lua	vendor
 ActuallyUsefulTurtles/controller/gui/classTaskControl.lua	gui/classTaskControl.lua	vendor
-ActuallyUsefulTurtles/controller/gui/classTaskGroupControl.lua	gui/classTaskGroupControl.lua	vendor
+ActuallyUsefulTurtles/patches/classTaskGroupControl.lua	gui/classTaskGroupControl.lua	patch
 ActuallyUsefulTurtles/patches/classTaskGroupDetails.lua	gui/classTaskGroupDetails.lua	patch
 ActuallyUsefulTurtles/patches/classTaskGroupSelector.lua	gui/classTaskGroupSelector.lua	patch
 ActuallyUsefulTurtles/controller/gui/classTaskList.lua	gui/classTaskList.lua	vendor

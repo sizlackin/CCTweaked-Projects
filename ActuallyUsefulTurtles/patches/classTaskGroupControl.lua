@@ -85,6 +85,12 @@ end
 
 function TaskGroupControl:cancelTask()
 	self.taskGroup:cancel()
+	-- LABENHANCED_AREA_LIFECYCLE
+	-- A cancelled group has no live outline. Drop it now rather than waiting
+	-- for the next drawAreas sweep.
+	if self.mapDisplay and self.taskGroup then
+		self.mapDisplay:removeGroupArea(self.taskGroup.id)
+	end
 end
 
 function TaskGroupControl:openMap()
@@ -92,7 +98,11 @@ function TaskGroupControl:openMap()
 	if self.hostDisplay and self.mapDisplay then
 		local start, finish, focus = self.taskGroup:getAreaDetails()
 		if not start then return end
-		table.insert(self.mapDisplay.areas, {start = start, finish = finish, color = self.taskGroup:getStatusColor()})
+		-- LABENHANCED_AREA_LIFECYCLE
+		-- Upsert one managed outline keyed by group id instead of pushing an
+		-- untagged rectangle. An untagged entry can never be cleaned up, so
+		-- reopening this row used to stack duplicates that outlived the group.
+		self.mapDisplay:setGroupArea(self.taskGroup)
 		self.mapDisplay:setMid(focus.x, focus.y, focus.z)
 		self.hostDisplay:displayMap()
 	end
@@ -257,11 +267,18 @@ function TaskGroupControl:refresh()
 end
 
 function TaskGroupControl:deleteGroup()
-	if self.taskGroup then 
+	-- LABENHANCED_AREA_LIFECYCLE
+	-- Capture the id and clear the outline before deleting, because the group
+	-- may no longer be resolvable afterwards.
+	local groupId = self.taskGroup and self.taskGroup.id
+	if self.mapDisplay and groupId then
+		self.mapDisplay:removeGroupArea(groupId)
+	end
+	if self.taskGroup then
 		self.taskGroup:delete()
 	end
 	if self.hostDisplay then
-		self.hostDisplay:deleteGroup(self.taskGroup.id)
+		self.hostDisplay:deleteGroup(groupId)
 	end
 	return true
 end
