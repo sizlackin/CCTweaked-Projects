@@ -345,19 +345,17 @@ function MapDisplay:drawChrome()
 	local zoom = chrome.zoom
 	self:drawFilledBox(zoom.x, zoom.y, zoom.w, zoom.h, plate)
 
-	-- cc-mek-scada thin frame: a 1-subpixel ring drawn with teletext glyphs.
+	-- Layers panel: use a clean solid frame. The previous teletext/subpixel
+	-- border left isolated edge pixels where its corner glyphs met the title
+	-- plate. A one-character plate-colored frame is visually stable on every
+	-- monitor scale and removes those artifacts.
 	local p = chrome.layers
-	local inner = p.w - 2
-	self:drawFilledBox(p.x, p.y, p.w, p.h, panel)
-	self:drawText(p.x, p.y, "\151", plate, panel)
-	self:drawText(p.x + 1, p.y, string.rep("\131", inner), plate, panel)
-	self:drawText(p.x + p.w - 1, p.y, "\148", panel, plate)
-	for row = p.y + 1, p.y + p.h - 2 do
-		self:drawText(p.x, row, "\149", plate, panel)
-		self:drawText(p.x + p.w - 1, row, "\149", panel, plate)
+	self:drawFilledBox(p.x, p.y, p.w, p.h, plate)
+	if p.w > 2 and p.h > 2 then
+		self:drawFilledBox(p.x + 1, p.y + 1, p.w - 2, p.h - 2, panel)
 	end
-	self:drawText(p.x, p.y + p.h - 1, "\138" .. string.rep("\143", inner) .. "\133", panel, plate)
 	if p.titleRow then
+		self:drawFilledBox(p.x, p.titleRow, p.w, 1, plate)
 		self:drawText(p.x, p.titleRow, padCenter("LAYERS", p.w), default.valueColor, plate)
 	end
 end
