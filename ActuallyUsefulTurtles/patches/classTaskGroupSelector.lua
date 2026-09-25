@@ -3,6 +3,7 @@ local Label = require("classLabel")
 local Window = require("classWindow")
 local Frame = require("classFrame")
 local ChoiceSelector = require("classChoiceSelector")
+local CheckBox = require("classCheckBox")
 
 local default = {
 	colors = {
@@ -41,6 +42,9 @@ function TaskGroupSelector:new(x,y, taskManager, slowStart)
 	o.selectionMode = false
 	o.btnConfirmArea = nil
 	o.btnReselectArea = nil
+	o.btnSelectionMode = nil
+	o.btnCursorMode = nil
+	o.cursorMode = false
 	o.taskGroup = nil
 	o.taskManager = taskManager
 	o.slowStart = slowStart
@@ -297,9 +301,72 @@ function TaskGroupSelector:clearAreaControls()
 	self.btnReselectArea = nil
 end
 
+local function drawModeToggle(cb)
+	if not (cb.parent and cb.visible) then return end
+	local bg = colors.gray
+	local accent = cb.active and cb.accentColor or colors.gray
+	local textColor = cb.active and colors.white or colors.lightGray
+	-- Same compact lamp language as MAP OPTIONS, on an X/Z-style gray plate.
+	cb.parent:drawFilledBox(cb.x, cb.y, cb.width, 1, bg)
+	cb.parent:drawText(cb.x, cb.y, cb.active and "\136" or " ", colors.black, accent)
+	cb.parent:drawText(cb.x + 2, cb.y, cb.labelText, textColor, bg)
+end
+
+function TaskGroupSelector:clearModeControls()
+	if self.mapDisplay then
+		if self.btnSelectionMode then self.mapDisplay:removeObject(self.btnSelectionMode) end
+		if self.btnCursorMode then self.mapDisplay:removeObject(self.btnCursorMode) end
+	end
+	self.btnSelectionMode = nil
+	self.btnCursorMode = nil
+end
+
+function TaskGroupSelector:setMapInteractionMode(cursorMode)
+	self.cursorMode = cursorMode and true or false
+	if self.btnSelectionMode then self.btnSelectionMode.active = not self.cursorMode end
+	if self.btnCursorMode then self.btnCursorMode.active = self.cursorMode end
+	if self.mapDisplay then
+		if self.cursorMode then
+			self.mapDisplay.doSelectPosition = false
+		else
+			self.mapDisplay.onPositionSelected = function(objRef,x,y,z) self:onAreaSelected(x,y,z) end
+			self.mapDisplay:selectPosition()
+		end
+		self.mapDisplay:redraw()
+	end
+end
+
+function TaskGroupSelector:showModeControls()
+	if not self.mapDisplay or self.btnSelectionMode then return end
+
+	-- One black-cell gap after the yellow level + control.
+	local x = self.mapDisplay.btnLevelUp.x + self.mapDisplay.btnLevelUp.width + 1
+	local width = 16
+
+	self.btnSelectionMode = CheckBox:new(x, 1, "Selection mode", not self.cursorMode, width, 1, colors.gray)
+	self.btnSelectionMode.accentColor = colors.green
+	self.btnSelectionMode.redraw = drawModeToggle
+	self.btnSelectionMode.click = function()
+		self:setMapInteractionMode(false)
+		return true
+	end
+
+	self.btnCursorMode = CheckBox:new(x, 2, "Cursor mode", self.cursorMode, width, 1, colors.gray)
+	self.btnCursorMode.accentColor = colors.cyan
+	self.btnCursorMode.redraw = drawModeToggle
+	self.btnCursorMode.click = function()
+		self:setMapInteractionMode(true)
+		return true
+	end
+
+	self.mapDisplay:addObject(self.btnSelectionMode)
+	self.mapDisplay:addObject(self.btnCursorMode)
+end
+
 function TaskGroupSelector:clearAreaPreview()
 	-- LABENHANCED_WORLDEDIT_AREA_SELECT
 	self.selectionMode = false
+	self:clearModeControls()
 	if self.mapDisplay then
 		self.mapDisplay.doSelectPosition = false
 	end
@@ -498,10 +565,13 @@ function TaskGroupSelector:selectArea()
 	self:clearAreaPreview()
 	self.positions = {}
 	self.selectionMode = true
+	self.cursorMode = false
 	self.mapDisplay.onPositionSelected = function(objRef,x,y,z) self:onAreaSelected(x,y,z) end
 	self.mapDisplay:selectPosition()
 	self:openMap()
-	-- Controls stay hidden until POS1 exists.
+	self:showModeControls()
+	self:setMapInteractionMode(false)
+	-- DESELECT/CONFIRM stay hidden until their required positions exist.
 	self.mapDisplay:redraw()
 end
 
@@ -533,7 +603,7 @@ function TaskGroupSelector:onAreaSelected(x, y, z)
 		self:updateAreaPreview()
 
 		-- Persistent edit mode: immediately arm the map for the next right-click.
-		if self.selectionMode then
+		if self.selectionMode and not self.cursorMode then
 			self.mapDisplay.onPositionSelected = function(objRef,sx,sy,sz)
 				self:onAreaSelected(sx,sy,sz)
 			end
