@@ -2447,15 +2447,13 @@ function Miner:mineVein()
 	self.taskList:remove(currentTask)
 end
 
-function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps)
+function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps, rowTurnDirection)
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name}, true)
 	print("stripmining", "rows", rows, "levels", levels)
 
-	local directionFactor = 1 -- -1 for right hand mining
-
 	local taskState = currentTask.taskState
 	if taskState then
-		rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps = tableunpack(taskState.args,1,taskState.args.n)
+		rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps, rowTurnDirection = tableunpack(taskState.args,1,taskState.args.n)
 	else
 		taskState = {
 			stage = 1,
@@ -2464,12 +2462,13 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 				currentRow = 1,
 				currentLevel = 1,
 				rowOrientation = self.orientation,
-				tunnelDirection = -1 * directionFactor,
+				tunnelDirection = rowTurnDirection or -1,
+				baseTunnelDirection = rowTurnDirection or -1,
 				startPos = vector.new(self.pos.x, self.pos.y, self.pos.z),
 				startOrientation = self.orientation,
 				torchSide = -1, -- fixed left wall
 			},
-			args = tablepack(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps),
+			args = tablepack(rowLength, rows, levels, rowFactor, levelFactor, offset, noInspect, rowSteps, rowTurnDirection),
 		}
 	end
 	local vars = taskState.vars
@@ -2544,9 +2543,12 @@ function Miner:stripMine(rowLength, rows, levels, rowFactor, levelFactor, offset
 				vars.currentLevel = currentLevel
 				self.checkPointer:save(self)
 
-				if currentLevel%2 == 0 and rows%2 == 0 then 
-					vars.tunnelDirection = 1 * directionFactor
-				else vars.tunnelDirection = -1 * directionFactor end
+				local baseTurn = vars.baseTunnelDirection or rowTurnDirection or -1
+				if currentLevel%2 == 0 and rows%2 == 0 then
+					vars.tunnelDirection = -baseTurn
+				else
+					vars.tunnelDirection = baseTurn
+				end
 				
 				for currentRow = vars.currentRow, rows do
 					vars.currentRow = currentRow
@@ -3156,6 +3158,27 @@ local function buildEfficientStripRowSteps(shortSpan,rowFactor)
 	return #steps + 1, steps
 end
 
+local function getStripRowTurnDirection(orientation,startPos,finishPos)
+	-- LABENHANCED_GLOBAL_STRIP_GRID
+	-- stripMine's +/-1 turn must point INTO the assigned stripe. The old hard-
+	-- coded left turn only worked from half of the possible starting corners.
+	local desiredX,desiredZ = 0,0
+	if orientation % 2 == 0 then
+		local dx = finishPos.x-startPos.x
+		desiredX = (dx > 0 and 1) or (dx < 0 and -1) or 0
+	else
+		local dz = finishPos.z-startPos.z
+		desiredZ = (dz > 0 and 1) or (dz < 0 and -1) or 0
+	end
+
+	local left = vectors[(orientation-1)%4]
+	if (desiredX ~= 0 and left.x == desiredX)
+	or (desiredZ ~= 0 and left.z == desiredZ) then
+		return -1
+	end
+	return 1
+end
+
 function Miner:mineArea(start, finish) 
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name}, true)
 	-- mine area within start and finish pos
@@ -3236,6 +3259,10 @@ function Miner:mineArea(start, finish)
 		local sharedEnd = assignmentVars.sharedAccessEnd
 		local accessEntry = assignmentVars.accessEntry
 		local accessLeader = assignmentVars.accessLeader
+		local stripAxis = assignmentVars.stripAxis
+		local stripLaneStart = assignmentVars.stripLaneStart
+		local stripLaneFinish = assignmentVars.stripLaneFinish
+		local stripLaneCount = assignmentVars.stripLaneCount
 
 		local reachedArea = false
 		if sharedEntry then
@@ -3249,30 +3276,65 @@ function Miner:mineArea(start, finish)
 				reachedArea = self:navigateOpenPathToPos((accessEntry or sharedEntry).x,(accessEntry or sharedEntry).y,(accessEntry or sharedEntry).z)
 			end
 
-			-- LABENHANCED_NO_PRIVATE_STRIPE_CONNECTOR
-			-- The shared access spine now lands on an actual corner of every
-			-- assigned stripe. Start mining from THAT corner. Never carve a
-			-- turtle-specific connector from the shared road to some other start.
+			-- LABENHANCED_GLOBAL_STRIP_GRID
+			-- accessEntry now lands on this turtle's first lane of ONE global
+			-- 3-block strip grid. It may sit one block inside the stripe boundary,
+			-- but it is still on the shared access spine -- no private connector.
 			if reachedArea then
 				local entry = accessEntry or sharedEntry
 				local b = assignedBounds
-				local onXEdge = entry and (entry.x == b.minX or entry.x == b.maxX)
-				local onZEdge = entry and (entry.z == b.minZ or entry.z == b.maxZ)
 
-				if not entry or not onXEdge or not onZEdge then
-					-- Old task groups used midpoint entries. Do not preserve that
-					-- layout by drilling a private shortcut; require a freshly
-					-- created group using corner entries.
-					print("SHARED ENTRY IS NOT A STRIPE CORNER - REFUSING PRIVATE CONNECTOR")
-					reachedArea = false
+				if stripAxis and stripLaneStart ~= nil and stripLaneFinish ~= nil then
+					local valid = false
+					if stripAxis == "x" then
+						valid = entry
+							and (entry.z == b.minZ or entry.z == b.maxZ)
+							and entry.x >= b.minX and entry.x <= b.maxX
+						if valid then
+							start = vector.new(stripLaneStart,b.minY,entry.z)
+							finish = vector.new(
+								stripLaneFinish,
+								b.maxY,
+								(entry.z == b.minZ) and b.maxZ or b.minZ
+							)
+						end
+					elseif stripAxis == "z" then
+						valid = entry
+							and (entry.x == b.minX or entry.x == b.maxX)
+							and entry.z >= b.minZ and entry.z <= b.maxZ
+						if valid then
+							start = vector.new(entry.x,b.minY,stripLaneStart)
+							finish = vector.new(
+								(entry.x == b.minX) and b.maxX or b.minX,
+								b.maxY,
+								stripLaneFinish
+							)
+						end
+					end
+
+					if not valid then
+						print("INVALID GLOBAL STRIP ENTRY - REFUSING PRIVATE CONNECTOR")
+						reachedArea = false
+					end
 				else
-					start = vector.new(entry.x,b.minY,entry.z)
-					finish = vector.new(
-						(entry.x == b.minX) and b.maxX or b.minX,
-						b.maxY,
-						(entry.z == b.minZ) and b.maxZ or b.minZ
-					)
+					-- Compatibility for task groups created before the global-grid
+					-- update: keep the corner-only rule, never drill a shortcut.
+					local onXEdge = entry and (entry.x == b.minX or entry.x == b.maxX)
+					local onZEdge = entry and (entry.z == b.minZ or entry.z == b.maxZ)
+					if not entry or not onXEdge or not onZEdge then
+						print("SHARED ENTRY IS NOT A STRIPE CORNER - REFUSING PRIVATE CONNECTOR")
+						reachedArea = false
+					else
+						start = vector.new(entry.x,b.minY,entry.z)
+						finish = vector.new(
+							(entry.x == b.minX) and b.maxX or b.minX,
+							b.maxY,
+							(entry.z == b.minZ) and b.maxZ or b.minZ
+						)
+					end
+				end
 
+				if reachedArea then
 					local stripeDx = finish.x - start.x
 					local stripeDz = finish.z - start.z
 					if math.abs(stripeDx) >= math.abs(stripeDz) then
@@ -3326,20 +3388,36 @@ function Miner:mineArea(start, finish)
 				rowLength = width
 				rows,rowSteps = buildEfficientStripRowSteps(depth,rowFactor)
 			end
+
+			-- New coordinated groups already supply exact 3-spaced lane count.
+			-- Do not let a per-stripe helper invent a 2-block final lane.
+			if stripLaneCount and stripLaneCount >= 1 then
+				rows = stripLaneCount
+				rowSteps = {}
+				for i=1,rows-1 do rowSteps[i] = 3 end
+			end
 			if diff.y < 0 then
 				levels = math.floor(((-height-levelFactor)/levelFactor)+0.5)
 			else
 				levels = math.floor(((height+levelFactor)/levelFactor)+0.5)
 			end
 			self:turnTo(orientation)
-			self:setActiveMiningBounds(start,finish)
+			if sharedEntry then
+				self:setActiveMiningBounds(
+					vector.new(assignedBounds.minX,assignedBounds.minY,assignedBounds.minZ),
+					vector.new(assignedBounds.maxX,assignedBounds.maxY,assignedBounds.maxZ)
+				)
+			else
+				self:setActiveMiningBounds(start,finish)
+			end
+			local rowTurnDirection = getStripRowTurnDirection(orientation,start,finish)
 
 			self:updateProgress("stage", 0.05)
 			taskState.stage = 2
 			taskState.ignorePosition = true
 			self.checkPointer:save(self)
 
-			self:stripMine(rowLength, rows, levels, rowFactor, levelFactor, nil, nil, rowSteps)
+			self:stripMine(rowLength, rows, levels, rowFactor, levelFactor, nil, nil, rowSteps, rowTurnDirection)
 
 			-- LABENHANCED_FAR_EDGE_SPINE
 			-- Turn the striped "comb" into one connected tunnel network at the
