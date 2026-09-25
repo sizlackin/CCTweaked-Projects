@@ -43,6 +43,48 @@ function Mapper:_queue(pos,dir,state,opts)
 	self.miner:queueTunnelUpdate(pos,dir,state,opts)
 end
 
+function Mapper:_trafficKey(pos,dir)
+	return tostring(pos.x)..","..tostring(pos.y)..","..tostring(pos.z).."|"..tostring(dir)
+end
+
+function Mapper:handleTraffic(frontier,target,dir,trafficHits)
+	-- LABENHANCED_SMART_TRAFFIC
+	-- First collision: give the turtle ahead a brief chance to clear the lane.
+	-- Repeated/stalled collision: put that shared edge on a short cooldown,
+	-- release our frontier, and let the controller choose the nearest reachable
+	-- unclaimed frontier on another branch.
+	local m = self.miner
+	local nav = self.navigator
+	local from = vector.new(m.pos.x,m.pos.y,m.pos.z)
+	local key = self:_trafficKey(from,dir)
+	local hits = (trafficHits[key] or 0) + 1
+	trafficHits[key] = hits
+
+	print("TURTLE TRAFFIC AHEAD - BRIEF YIELD")
+	nav:renewFrontier(frontier)
+	sleep(0.75)
+
+	local ok,reason,name = nav:moveAdjacent(target)
+	if ok then
+		trafficHits[key] = nil
+		print("TRAFFIC CLEARED - CONTINUING")
+		return true,nil,nil
+	end
+
+	if reason ~= "traffic" then
+		return false,reason,name
+	end
+
+	-- Escalate the shared avoidance window for repeated congestion on the same
+	-- edge. This makes a mapper prefer a side branch / loop when one exists,
+	-- while still allowing this road to reopen automatically later.
+	local cooldown = math.min(3500 + (hits-1)*3000,15000)
+	nav:deferTrafficEdge(from,dir,cooldown)
+	nav:releaseFrontier(frontier)
+	print("TRAFFIC STALLED - TRYING NEXT BEST BRANCH")
+	return false,"traffic_reroute",name
+end
+
 function Mapper:surveyCurrent(existingNode)
 	local m = self.miner
 	local pos = vector.new(m.pos.x,m.pos.y,m.pos.z)
@@ -241,6 +283,7 @@ function Mapper:mapNetwork(radius,maxCells)
 	local startOrientation = m.orientation
 	local mapped = 0
 	local failedFrontiers = 0
+	local trafficHits = {}
 	local noFrontierConfirmations = 0
 	local stopReason = nil
 	local currentTask = m:addCheckTask({"mapTunnelNetwork"})
@@ -331,6 +374,16 @@ function Mapper:mapNetwork(radius,maxCells)
 				local pathDir = TunnelMap.directionBetween(from,target)
 				local ok,moveReason,blockName = nav:moveAdjacent(target)
 
+				if not ok and moveReason == "traffic" and pathDir then
+					ok,moveReason,blockName =
+						self:handleTraffic(frontier,target,pathDir,trafficHits)
+					if not ok and moveReason == "traffic_reroute" then
+						pathReady = false
+						failedFrontiers = 0
+						break
+					end
+				end
+
 				if not ok and moveReason == "decoration" and pathDir then
 					ok = self:bypassDecoration({dir=pathDir},blockName)
 					if ok then
@@ -377,6 +430,16 @@ function Mapper:mapNetwork(radius,maxCells)
 			local target = vector.new(frontier.target.x,frontier.target.y,frontier.target.z)
 			local ok,moveReason,blockName = nav:moveAdjacent(target)
 
+			if not ok and moveReason == "traffic" then
+				local dir = TunnelMap.directionBetween(
+					vector.new(m.pos.x,m.pos.y,m.pos.z),target
+				)
+				if dir then
+					ok,moveReason,blockName =
+						self:handleTraffic(frontier,target,dir,trafficHits)
+				end
+			end
+
 			-- A lower-cell torch is decoration, not the end of a tunnel. Preserve
 			-- it and take the upper half of the existing 2-high tunnel around it.
 			if not ok and moveReason == "decoration" then
@@ -402,7 +465,13 @@ function Mapper:mapNetwork(radius,maxCells)
 				end
 			else
 				-- moveAdjacent classified the blockage and synchronised it.
-				failedFrontiers = failedFrontiers + 1
+				-- A traffic reroute already released this frontier, so the next
+				-- outer iteration will choose another accessible branch.
+				if moveReason ~= "traffic_reroute" then
+					failedFrontiers = failedFrontiers + 1
+				else
+					failedFrontiers = 0
+				end
 			end
 		end
 
