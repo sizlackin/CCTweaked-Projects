@@ -220,6 +220,31 @@ node.onReceive = function(msg)
 					global.err = nil
 				end
 			end
+		elseif txt == "FORCE_CLEAR_STALE_TASK" then
+			-- LABENHANCED_STALE_CHECKPOINT_RECOVERY
+			-- This is only for an assignment which the turtle reports as idle
+			-- (no live task stack) after a failed/rebooted checkpoint restore.
+			-- Delete the persisted checkpoint so reboot cannot restore the same
+			-- ghost assignment again.
+			local taskId = data[2]
+			local active = miner and miner.taskList and miner.taskList.first
+			local assignment = miner and miner:getTaskAssignment() or nil
+			if miner and not active
+			and (not taskId or not assignment or assignment.id == taskId) then
+				if assignment then assignment.status = "cancelled" end
+				miner.currentTaskAssignment = nil
+				miner.stop = true
+				if miner.checkPointer then
+					miner.checkPointer.checkpoint = nil
+				end
+				if fs.exists("runtime/checkpoint.txt") then
+					fs.delete("runtime/checkpoint.txt")
+				end
+				global.err = nil
+				node:answer(msg, {"STALE_TASK_CLEARED", taskId})
+			else
+				node:answer(msg, {"STALE_TASK_CLEAR_REFUSED", taskId})
+			end
 		else
 			if miner then
 				miner.queue:addDirectTask(data[1], data[2], data[3])
