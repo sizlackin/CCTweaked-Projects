@@ -27,8 +27,8 @@ local files = {
     targets={"turtle/classMiner.lua"},
   },
   {
-    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/7b92c1d00c8773e76904daccf2defc3477bee622/ActuallyUsefulTurtles/tunnelnav/classTunnelMapper.lua",
-    marker="LABENHANCED_MULTI_MAPPER_CLAIMS",
+    url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/0b6febc65a7811c583f558f89cb85d762a4612c0/ActuallyUsefulTurtles/tunnelnav/classTunnelMapper.lua",
+    marker="LABENHANCED_BRANCH_RESCUE",
     targets={"turtle/classTunnelMapper.lua"},
   },
   {
