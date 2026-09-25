@@ -4331,7 +4331,17 @@ function Miner:excavateArea(start, finish)
 
 		print("start", start,"end",finish, "diff", diff, "levels", levels)
 		
-		if not self:navigateToPos(start.x, start.y, start.z) then
+		-- LABENHANCED_EXCAVATE_TUNNEL_APPROACH
+		-- Reach the work area through the existing tunnel network, the way
+		-- mineArea already does, instead of digging a fresh corridor across the
+		-- world to get there. Falls back to the digging A* so a brand-new area
+		-- with no road leading to it is still reachable.
+		local reachedArea = self:navigateOpenPathToPos(start.x, start.y, start.z)
+		if not reachedArea then
+			print("NO TUNNEL ROUTE TO AREA - FALLING BACK TO DIRECT NAVIGATION")
+			reachedArea = self:navigateToPos(start.x, start.y, start.z)
+		end
+		if not reachedArea then
 			print("unable to get to area")
 			self:returnHome()
 			-- save checkpoint, tasklist remove
