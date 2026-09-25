@@ -327,7 +327,8 @@ function TaskGroupSelector:layoutAreaControls()
 		confirmX = deselectX + deselectWidth + 1
 	end
 
-	return deselectX, confirmX, 2
+	-- Raise both action buttons one row for cleaner alignment with the top controls.
+	return deselectX, confirmX, 1
 end
 
 function TaskGroupSelector:showAreaControls()
