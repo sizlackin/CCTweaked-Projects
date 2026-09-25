@@ -1,7 +1,6 @@
--- Restyles the map screen: ghost-filled adjustment buttons with color-coded
--- borders per cluster (cyan=pan, yellow=level, lime=zoom), legible backdrops
--- behind the Level/X/Y/Z/zoom readouts, and dimmed checkbox text.
--- Purely visual -- no button position, size, or click region changes.
+-- Restyles the map screen after cc-mek-scada: solid color-coded buttons
+-- (cyan=pan, yellow=level, lime=zoom, red=close), gray plates behind the
+-- Level/X/Z/zoom readouts, and a framed LAYERS panel of toggles.
 -- Run on the MAIN CONTROLLER at the normal CraftOS > prompt.
 
 local url = "https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/patches/classMapDisplay.lua"

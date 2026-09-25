@@ -22,16 +22,53 @@ aboveColor = colors.purple,
 belowColor = colors.orange,
 homeColor = colors.magenta,
 circleRadius = 16 * 16, -- render distance of 16 chunks
--- Chrome theme: ghost-filled adjustment buttons, color-coded per cluster so
--- level/zoom aren't confused (both use bare +/- glyphs). LABENHANCED_MAP_UI_THEME
-chromeColor = colors.black,
-panBorderColor = colors.cyan,
-levelBorderColor = colors.yellow,
-zoomBorderColor = colors.lime,
-checkboxTextColor = colors.lightGray,
+-- SCADA-style chrome (cc-mek-scada "deepslate" roles on the default palette,
+-- which terrain colors depend on). LABENHANCED_MAP_UI_THEME
+plateColor = colors.gray,
+panelColor = colors.black,
+captionColor = colors.lightGray,
+valueColor = colors.white,
+glyphColor = colors.black,
+panColor = colors.cyan,
+levelColor = colors.yellow,
+zoomColor = colors.lime,
+closeColor = colors.red,
 }
 
 local blitTab = BasicWindow.blitTab
+
+local function padCenter(text, width)
+	text = tostring(text)
+	local gap = width - #text
+	if gap <= 0 then return text end
+	local left = math.floor(gap / 2)
+	return string.rep(" ", left) .. text .. string.rep(" ", gap - left)
+end
+
+local function padLeft(text, width)
+	text = tostring(text)
+	if #text >= width then return text end
+	return string.rep(" ", width - #text) .. text
+end
+
+local function round(v)
+	return tostring(math.floor(v + 0.5))
+end
+
+-- SCADA checkbox: a 3x3-subpixel lamp in the layer's own map color, then the label.
+local function drawLayerToggle(cb)
+	if not (cb.parent and cb.visible) then return end
+	local bg = cb.backgroundColor
+	if cb.active then
+		cb.parent:drawText(cb.x, cb.y, "\136", default.plateColor, cb.accentColor)
+		cb.parent:drawText(cb.x + 1, cb.y, "\149", cb.accentColor, bg)
+	else
+		cb.parent:drawText(cb.x, cb.y, "\136", bg, default.plateColor)
+		cb.parent:drawText(cb.x + 1, cb.y, "\149", default.plateColor, bg)
+	end
+	local textColor = cb.active and default.valueColor or default.captionColor
+	cb.parent:drawText(cb.x + 2, cb.y, cb.labelText, textColor, bg)
+end
 
 
 local mathRandom = math.random
@@ -91,42 +128,44 @@ function MapDisplay:initialize()
 	self.scrollFactor = math.floor( (self.height + self.width)/16 )
 	if self.scrollFactor <= 0 then self.scrollFactor = 1 end
 
-	self.btnClose = Button:new("X",self.width-2,1,3,3,colors.red)
+	-- Solid 3x3 tabs with a dark glyph, like cc-mek-scada's tall sidebar tabs.
+	-- Positions are placeholders; layoutControls() places everything.
+	local function tab(glyph, color)
+		local btn = Button:new(glyph, 1, 1, 3, 3, color)
+		btn:setTextColor(default.glyphColor)
+		return btn
+	end
+	self.btnClose = tab("\215", default.closeColor)
 	self.btnClose.click = function() return self:close() end
 
-	self.btnLeft = Button:new("<",1,self.midHeight,3,3,default.chromeColor)
-	self.btnLeft:setBorderColor(default.panBorderColor)
-	self.btnRight = Button:new(">",self.width-2,self.midHeight,3,3,default.chromeColor)
-	self.btnRight:setBorderColor(default.panBorderColor)
-	self.btnUp = Button:new("^",self.midWidth,1,3,3,default.chromeColor)
-	self.btnUp:setBorderColor(default.panBorderColor)
-	self.btnDown = Button:new("v",self.midWidth,self.height-2,3,3,default.chromeColor)
-	self.btnDown:setBorderColor(default.panBorderColor)
+	self.btnLeft = tab("\17", default.panColor)
+	self.btnRight = tab("\16", default.panColor)
+	self.btnUp = tab("\30", default.panColor)
+	self.btnDown = tab("\31", default.panColor)
+	self.btnLevelDown = tab("-", default.levelColor)
+	self.btnLevelUp = tab("+", default.levelColor)
+	self.btnZoomIn = tab("+", default.zoomColor)
+	self.btnZoomOut = tab("-", default.zoomColor)
 
-	self.btnLevelDown= Button:new("-",1,1,3,3,default.chromeColor)
-	self.btnLevelDown:setBorderColor(default.levelBorderColor)
-	self.lblLevel = Label:new("Level", 4,1, default.levelBorderColor, default.chromeColor)
-	self.lblY = Label:new(self.mapMidY, 5,2, default.levelBorderColor, default.chromeColor)
-	self.btnLevelUp = Button:new("+",9,1,3,3,default.chromeColor)
-	self.btnLevelUp:setBorderColor(default.levelBorderColor)
-	self.lblX = Label:new("X  " .. self.mapMidX, 1,4, nil, default.chromeColor)
-	self.lblZ = Label:new("Z  " .. self.mapMidZ, 1,5, nil, default.chromeColor)
+	-- Live values; their captions and plates are painted by drawChrome().
+	self.lblY = Label:new("", 1, 1, default.valueColor, default.plateColor)
+	self.lblX = Label:new("", 1, 1, default.valueColor, default.plateColor)
+	self.lblZ = Label:new("", 1, 1, default.valueColor, default.plateColor)
+	self.lblZoom = Label:new("", 1, 1, default.valueColor, default.plateColor)
 
-	self.btnZoomOut = Button:new("-",self.width-2,self.height-2,3,3,default.chromeColor)
-	self.btnZoomOut:setBorderColor(default.zoomBorderColor)
-	self.btnZoomIn = Button:new("+",self.width-2,self.height-6,3,3,default.chromeColor)
-	self.btnZoomIn:setBorderColor(default.zoomBorderColor)
-	self.lblZoom = Label:new(self.zoomLevel..":"..self.zoomBase, self.width-2, self.height-3, default.zoomBorderColor, default.chromeColor)
-	self.btnTurtles = CheckBox:new(1,self.height-2,"turtles",self.displayTurtles,nil,nil,self.backgroundColor)
-	self.btnTurtles:setTextColor(default.checkboxTextColor)
-	self.btnHome = CheckBox:new(1,self.height-1,"home",self.displayHome,nil,nil,self.backgroundColor)
-	self.btnHome:setTextColor(default.checkboxTextColor)
-	self.btnCircle = CheckBox:new(1,self.height, "128/256 circles",self.displayChunkCircle,nil,nil,self.backgroundColor)
-	self.btnCircle:setTextColor(default.checkboxTextColor)
-	self.btnFloorColors = CheckBox:new(1,self.height-4, "floor colors",self.displayFloorColors,nil,nil,self.backgroundColor)
-	self.btnFloorColors:setTextColor(default.checkboxTextColor)
-	self.btnFocusPocket = CheckBox:new(1,self.height-3, "live pos",self.focusPocket,nil,nil,self.backgroundColor)
-	self.btnFocusPocket:setTextColor(default.checkboxTextColor)
+	local function layer(active, longLabel, shortLabel, accent)
+		local cb = CheckBox:new(1, 1, longLabel, active, nil, nil, default.panelColor)
+		cb.longLabel = longLabel
+		cb.shortLabel = shortLabel
+		cb.accentColor = accent
+		cb.redraw = drawLayerToggle
+		return cb
+	end
+	self.btnFloorColors = layer(self.displayFloorColors, "floor colors", "floor", colors.white)
+	self.btnFocusPocket = layer(self.focusPocket, "live pos", "gps", colors.yellow)
+	self.btnTurtles = layer(self.displayTurtles, "turtles", "turtles", default.turtleColor)
+	self.btnHome = layer(self.displayHome, "home", "home", default.homeColor)
+	self.btnCircle = layer(self.displayChunkCircle, "128/256 circles", "rings", colors.orange)
 
 
 	-- self == MapDisplay not button!
@@ -157,34 +196,38 @@ function MapDisplay:initialize()
 	self.btnTurtles.click = function()
 		self.displayTurtles = self.btnTurtles.active
 		self:redraw()
+		return true
 	end
 	self.btnHome.click = function()
 		self.displayHome = self.btnHome.active
 		self:redraw()
+		return true
 	end
 	self.btnCircle.click = function()
 		self.displayChunkCircle = self.btnCircle.active
 		self.fullRedraw = true
 		self:redraw()
+		return true
 	end
 	self.btnFloorColors.click = function()
 		self.displayFloorColors = self.btnFloorColors.active
 		self.fullRedraw = true
 		self:redraw()
+		return true
 	end
 	self.btnFocusPocket.click = function()
 		self.focusPocket = self.btnFocusPocket.active
 		self:redraw()
+		return true
 	end
 
-	
+
 	self:addObject(self.btnLeft)
-	self:addObject(self.btnRight)	
+	self:addObject(self.btnRight)
 	self:addObject(self.btnUp)
 	self:addObject(self.btnDown)
 	self:addObject(self.btnLevelUp)
 	self:addObject(self.btnLevelDown)
-	self:addObject(self.lblLevel)
 	self:addObject(self.lblX)
 	self:addObject(self.lblY)
 	self:addObject(self.lblZ)
@@ -198,7 +241,136 @@ function MapDisplay:initialize()
 	self:addObject(self.btnClose)
 
 	if pocket then self:addObject(self.btnFocusPocket) end
-	
+
+	self:layoutControls()
+end
+
+-- Every control position lives here, so initialize() and onResize() can't drift
+-- apart. Also records the chrome plates drawChrome() paints and clicks ignore.
+function MapDisplay:layoutControls()
+	local w, h, midW, midH = self.width, self.height, self.midWidth, self.midHeight
+	local plate = default.plateColor
+
+	-- Level cluster: [-] plate [+], kept clear of the up button at midWidth.
+	local levelWidth, levelCaption = 7, "Level"
+	if 6 + levelWidth > midW - 2 then levelWidth, levelCaption = 5, "Lvl" end
+	local clusterWidth = 6 + levelWidth
+	self.levelWidth = levelWidth
+	self.clusterWidth = clusterWidth
+
+	self.btnLevelDown:setPos(1, 1)
+	self.btnLevelUp:setPos(4 + levelWidth, 1)
+	self.btnUp:setPos(midW, 1)
+	self.btnClose:setPos(w - 2, 1)
+	self.btnLeft:setPos(1, midH)
+	self.btnRight:setPos(w - 2, midH)
+	self.btnDown:setPos(midW, h - 2)
+
+	-- Zoom column reads as a vertical spinner: [+] / value / [-].
+	self.btnZoomIn:setPos(w - 2, h - 6)
+	self.btnZoomOut:setPos(w - 2, h - 2)
+
+	-- Layers panel: hairline-framed toggles, labels shortened when the long
+	-- ones would run into the down button.
+	local layers = { self.btnFloorColors }
+	if pocket then layers[#layers + 1] = self.btnFocusPocket end
+	layers[#layers + 1] = self.btnTurtles
+	layers[#layers + 1] = self.btnHome
+	layers[#layers + 1] = self.btnCircle
+
+	local longest = 0
+	for _, cb in ipairs(layers) do longest = math.max(longest, #cb.longLabel) end
+	local useShort = longest + 4 > midW - 2
+	longest = 0
+	for _, cb in ipairs(layers) do
+		cb:setText(useShort and cb.shortLabel or cb.longLabel)
+		cb.width = 2 + #cb.labelText
+		longest = math.max(longest, cb.width)
+	end
+	local panelWidth = longest + 2
+	local panelTop = h - #layers - 1
+	for i, cb in ipairs(layers) do cb:setPos(2, panelTop + i) end
+	local titleRow = panelTop - 1
+	local showTitle = titleRow >= midH + 4
+
+	self.chrome = {
+		level = { x = 4, y = 1, w = levelWidth, h = 3, caption = levelCaption },
+		coords = { x = 1, y = 5, w = clusterWidth, h = 2 },
+		zoom = { x = w - 2, y = h - 3, w = 3, h = 1 },
+		layers = { x = 1, y = panelTop, w = panelWidth, h = #layers + 2,
+			titleRow = showTitle and titleRow or nil },
+	}
+	self:refreshReadouts()
+end
+
+function MapDisplay:refreshReadouts()
+	local chrome = self.chrome
+	if not chrome then return end
+
+	local level = chrome.level
+	self.lblY:setText(padCenter(round(self.mapMidY), level.w))
+	self.lblY:setPos(level.x, level.y + 1)
+
+	local coords = chrome.coords
+	local x, z = round(self.mapMidX), round(self.mapMidZ)
+	coords.w = math.max(self.clusterWidth, math.max(#x, #z) + 4)
+	local valueWidth = coords.w - 4
+	self.lblX:setText(padLeft(x, valueWidth))
+	self.lblX:setPos(coords.x + 3, coords.y)
+	self.lblZ:setText(padLeft(z, valueWidth))
+	self.lblZ:setPos(coords.x + 3, coords.y + 1)
+
+	local zoomText = self.zoomLevel < 1 and ("1:" .. self.zoomBase) or (self.zoomLevel .. ":" .. self.zoomBase)
+	local zoom = chrome.zoom
+	self.lblZoom:setText(padCenter(zoomText, zoom.w))
+	self.lblZoom:setPos(math.min(zoom.x, self.width - #zoomText + 1), zoom.y)
+end
+
+-- Plates, captions and the layers frame, drawn between the map and the controls.
+function MapDisplay:drawChrome()
+	local chrome = self.chrome
+	if not chrome then return end
+	local plate, panel = default.plateColor, default.panelColor
+	local caption = default.captionColor
+
+	local level = chrome.level
+	self:drawFilledBox(level.x, level.y, level.w, level.h, plate)
+	self:drawText(level.x, level.y, padCenter(level.caption, level.w), caption, plate)
+
+	local coords = chrome.coords
+	self:drawFilledBox(coords.x, coords.y, coords.w, coords.h, plate)
+	self:drawText(coords.x + 1, coords.y, "X", caption, plate)
+	self:drawText(coords.x + 1, coords.y + 1, "Z", caption, plate)
+
+	local zoom = chrome.zoom
+	self:drawFilledBox(zoom.x, zoom.y, zoom.w, zoom.h, plate)
+
+	-- cc-mek-scada thin frame: a 1-subpixel ring drawn with teletext glyphs.
+	local p = chrome.layers
+	local inner = p.w - 2
+	self:drawFilledBox(p.x, p.y, p.w, p.h, panel)
+	self:drawText(p.x, p.y, "\151", plate, panel)
+	self:drawText(p.x + 1, p.y, string.rep("\131", inner), plate, panel)
+	self:drawText(p.x + p.w - 1, p.y, "\148", panel, plate)
+	for row = p.y + 1, p.y + p.h - 2 do
+		self:drawText(p.x, row, "\149", plate, panel)
+		self:drawText(p.x + p.w - 1, row, "\149", panel, plate)
+	end
+	self:drawText(p.x, p.y + p.h - 1, "\138" .. string.rep("\143", inner) .. "\133", panel, plate)
+	if p.titleRow then
+		self:drawText(p.x, p.titleRow, padCenter("LAYERS", p.w), default.valueColor, plate)
+	end
+end
+
+function MapDisplay:isOnChrome(x, y)
+	if self.hiddenControls or not self.chrome then return false end
+	for _, r in pairs(self.chrome) do
+		local top = r.titleRow or r.y
+		if x >= r.x and x <= r.x + r.w - 1 and y >= top and y <= r.y + r.h - 1 then
+			return true
+		end
+	end
+	return false
 end
 
 function MapDisplay:handleClick(x,y) -- super override 
@@ -208,7 +380,7 @@ function MapDisplay:handleClick(x,y) -- super override
 	y = y - self.y + self.scrollY
 	if o and o.handleClick then
 		o:handleClick(x,y)
-	elseif not o and self.visible then
+	elseif not o and self.visible and not self:isOnChrome(x, y) then
 		varX = self.mapMidX + (x - self.midWidth - 1) * self.zoomLevel * 2
 		varZ = self.mapMidZ + (y - self.midHeight - 1) * self.zoomLevel * 3
 
@@ -247,8 +419,7 @@ function MapDisplay:scrollZoom(dir,x,z)
 		else
 			self:setMid(x + dx, self.mapMidY, z + dz)
 		end
-		local zoomText = self.zoomLevel < 1 and "1:"..self.zoomBase or (self.zoomLevel .. ":" .. self.zoomBase)
-		self.lblZoom:setText(zoomText)
+		self:refreshReadouts()
 		self:redraw()
 	end
 
@@ -275,26 +446,10 @@ function MapDisplay:onResize()
 	BasicWindow.onResize(self) -- super
 	
 	self.drawer:setSize(self.width*2, self.height*3)
-	self.btnClose:setPos(self.width - 3 + self.scrollX, self.scrollY) 
 
 	--self:calculateMapMid()
 	self:setMid(self.mapMidX, self.mapMidY, self.mapMidZ)
-	self.btnLeft:setPos(1,self.midHeight)
-	self.btnRight:setPos(self.width-2,self.midHeight)
-	self.btnUp:setPos(self.midWidth,1)
-	self.btnDown:setPos(self.midWidth,self.height-2)
-	
-	self.btnZoomOut:setPos(self.width-2, self.height-2)
-	self.btnZoomIn:setPos(self.width-2, self.height-6)
-	self.lblZoom:setPos(self.width-2, self.height-3)
-	
-	self.btnTurtles:setPos(1,self.height-2)
-	self.btnHome:setPos(1,self.height-1)
-	self.btnCircle:setPos(1,self.height)
-	self.btnFloorColors:setPos(1,self.height-4)
-	self.btnFocusPocket:setPos(1,self.height-3)
-
-	
+	self:layoutControls()
 end
 function MapDisplay:onRemove(parent)
 	self.focusId = nil
@@ -312,9 +467,7 @@ function MapDisplay:setMid(x,y,z)
 	self.mapY = self.mapMidY
 	self.mapZ = self.mapMidZ - math.floor(self.midHeight * self.zoomLevel * 3 + 0.5)
 
-	self.lblX:setText("X  " .. self.mapMidX)
-	self.lblY:setText(self.mapMidY)
-	self.lblZ:setText("Z  " .. self.mapMidZ)
+	self:refreshReadouts()
 end
 
 function MapDisplay:calculateMapMid()
@@ -325,32 +478,26 @@ end
 
 function MapDisplay:scrollLeft()
 	self:setMid(self.mapMidX - self.scrollFactor*self.zoomLevel * 2, self.mapMidY, self.mapMidZ)
-	self.lblX:setText("X  " .. self.mapMidX)
 	self:redraw()
 end
 function MapDisplay:scrollRight()
 	self:setMid(self.mapMidX + self.scrollFactor*self.zoomLevel * 2, self.mapMidY, self.mapMidZ)
-	self.lblX:setText("X  " .. self.mapMidX)
 	self:redraw()
 end
 function MapDisplay:scrollUp()
 	self:setMid(self.mapMidX, self.mapMidY, self.mapMidZ - self.scrollFactor*self.zoomLevel * 3)
-	self.lblZ:setText("Z  " .. self.mapMidZ)
 	self:redraw()
 end
 function MapDisplay:scrollDown()
 	self:setMid(self.mapMidX, self.mapMidY, self.mapMidZ + self.scrollFactor*self.zoomLevel * 3)
-	self.lblZ:setText("Z  " .. self.mapMidZ)
 	self:redraw()
 end
 function MapDisplay:levelUp()
 	self:setMid(self.mapMidX, self.mapMidY + 1, self.mapMidZ)
-	self.lblY:setText(self.mapMidY)
 	self:redraw()
 end
 function MapDisplay:levelDown()
 	self:setMid(self.mapMidX, self.mapMidY - 1, self.mapMidZ)
-	self.lblY:setText(self.mapMidY)
 	self:redraw()
 end
 function MapDisplay:zoomOut()
@@ -384,8 +531,6 @@ function MapDisplay:setZoomLevel(level)
 	local changed = self:calculateZoomLevel(level)
 	if changed then
 		self:setMid(self.mapMidX, self.mapMidY, self.mapMidZ)
-		local zoomText = level < 1 and "1:"..self.zoomBase or (level .. ":" .. self.zoomBase)
-		self.lblZoom:setText(zoomText)
 		self:redraw()
 	end
 end
@@ -798,6 +943,7 @@ function MapDisplay:redraw() -- super override
 		-- print("map", "redraw ct", ct, "time", os.epoch("utc") - start)
 		
 		self:redrawOverlay()
+		if not self.hiddenControls then self:drawChrome() end
 		-- redraw map elements
 		local node = self.objects.last
 		while node do
