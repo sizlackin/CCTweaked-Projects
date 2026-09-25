@@ -1791,8 +1791,10 @@ function Miner:digMove(safe)
 	-- while not mining any turtles
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 	local ct = 0
-	local result = true	
-	
+	local result = true
+	local failureReason = nil
+	local trafficWaits = 0
+
 	-- all changes here should be made in Down and Up as well
 	
 	-- optimization: if it is known that a block is in front -> dig first, then move
@@ -1834,14 +1836,15 @@ function Miner:digMove(safe)
 				sleep(0.25)
 				--print("digMove", checkSafe(blockName), blockName)
 			elseif isTurtleBlockId(blockName) then
-				-- LABENHANCED_MINING_ROUTE_BRIDGE
-				-- Never mine the teammate. Give short-lived traffic time to
-				-- clear before declaring the connector impossible.
-				print("TURTLE TRAFFIC IN MINE ACCESS - WAITING")
-				sleep(0.75)
-				ct = ct + 8
-				if ct > 96 then
-					print("TURTLE TRAFFIC DID NOT CLEAR")
+				-- LABENHANCED_COOP_MINING_TRAFFIC
+				-- Never mine a teammate. Briefly yield here, then hand control
+				-- back to tunnel() so it can use an open no-dig passing space
+				-- instead of sitting in the same lane indefinitely.
+				trafficWaits = trafficWaits + 1
+				print("TURTLE TRAFFIC AHEAD - YIELD",trafficWaits.."/6")
+				sleep(0.5)
+				if trafficWaits >= 6 then
+					failureReason = "traffic"
 					result = false
 					break
 				end
@@ -1867,7 +1870,7 @@ function Miner:digMove(safe)
 
 	self.taskList:remove(currentTask)
 
-	return ( result and ( blockName or true ) ) or false, data
+	return ( result and ( blockName or true ) ) or false, data, failureReason
 end
 
 function Miner:digMoveDown(safe)
@@ -2207,13 +2210,69 @@ function Miner:navigateKnownAirBootstrap(x,y,z)
 end
 
 
+-- LABENHANCED_COOP_MINING_TRAFFIC
+-- Use the already-dug upper half of a 1x2 tunnel as a temporary passing bay.
+-- This NEVER digs a block. It gives head-on traffic a way to pass in a
+-- one-wide floor lane before the navigator considers the route jammed.
+function Miner:yieldForTurtleTraffic(waitSeconds)
+	waitSeconds = tonumber(waitSeconds) or 4
+	local hasUp = turtle.inspectUp()
+	if hasUp then
+		return false,"no_headspace"
+	end
+
+	local originalY = self.pos.y
+	if not self:up() then
+		return false,"headspace_move_failed"
+	end
+
+	print("TRAFFIC YIELD - USING OPEN HEADSPACE")
+	local deadline = os.epoch("utc") + math.floor(waitSeconds * 1000)
+	sleep(0.5)
+
+	while os.epoch("utc") < deadline do
+		local hasDown,data = turtle.inspectDown()
+		if not hasDown then
+			if self:down() then
+				return self.pos.y == originalY,"headspace"
+			end
+		elseif not isTurtleBlockId(data and data.name) then
+			break
+		end
+		sleep(0.5)
+	end
+
+	-- A teammate may still be directly underneath us. Stay out of its way a
+	-- little longer rather than forcing a block break or descending onto it.
+	for _=1,8 do
+		local hasDown,data = turtle.inspectDown()
+		if not hasDown and self:down() then
+			return self.pos.y == originalY,"headspace"
+		end
+		if hasDown and not isTurtleBlockId(data and data.name) then
+			break
+		end
+		sleep(0.5)
+	end
+
+	print("TRAFFIC YIELD COULD NOT REJOIN FLOOR")
+	return false,"yield_rejoin_blocked"
+end
+
 function Miner:navigateOpenPathToPos(x,y,z)
 	local goal = vector.new(x,y,z)
+	self.lastNavigationFailureReason = nil
 	if self.pos == goal then return true end
 
 	if self.tunnelNavigator then
 		local ok,reason,stats = self.tunnelNavigator:navigateTo(goal)
 		if ok then return true end
+		self.lastNavigationFailureReason = reason
+
+		if reason == "traffic_jam_timeout" then
+			print("TURTLE TRAFFIC JAM TIMEOUT - REFUSING TO PUSH THROUGH")
+			return false
+		end
 
 		-- LABENHANCED_MINING_ROUTE_BRIDGE
 		-- The logical road graph can legitimately lag behind the older physical
@@ -2235,7 +2294,9 @@ function Miner:navigateOpenPathToPos(x,y,z)
 		return false
 	end
 
-	return self:navigateKnownAirBootstrap(x,y,z)
+	local ok = self:navigateKnownAirBootstrap(x,y,z)
+	if not ok then self.lastNavigationFailureReason = "no_open_route" end
+	return ok
 end
 
 -- LABENHANCED_CONTAINED_MINING
@@ -3060,6 +3121,20 @@ function Miner:mineArea(start, finish)
 			-- connection from the shared entrance.
 			if reachedArea then
 				start, finish, orientation = self:getAreaStart(start,finish)
+
+				-- LABENHANCED_COOP_STRIPE_ORIENTATION
+				-- getAreaStart() chooses the nearest corner, but its returned
+				-- orientation can point across the short axis. Re-lock the work
+				-- direction to THIS turtle's stripe long axis so teammates make
+				-- parallel tunnels instead of accidentally entering one another's.
+				local stripeDx = finish.x - start.x
+				local stripeDz = finish.z - start.z
+				if math.abs(stripeDx) >= math.abs(stripeDz) then
+					orientation = (stripeDx >= 0) and 3 or 1
+				else
+					orientation = (stripeDz >= 0) and 0 or 2
+				end
+
 				if not sameAccessPos(self.pos,start) then
 					if not self:navigateOpenPathToPos(start.x,start.y,start.z) then
 						reachedArea = self:digNeatAccessTunnelTo(start)
@@ -3651,9 +3726,17 @@ function Miner:tunnel(length, direction, noInspect)
 				self.activeTunnelAnchor = vector.new(self.pos.x,self.pos.y,self.pos.z)
 				self:displaceLavaAhead()
 			end
-			if not digFunc(self) then 
-				-- if two turtles get in each others way, steps could be skipped
-				-- try to navigate to next step, else quit
+			local moved,_,moveReason = digFunc(self)
+			if not moved and moveReason == "traffic" then
+				-- LABENHANCED_COOP_MINING_TRAFFIC
+				-- We should not queue behind another working turtle. Use the
+				-- open 2-high headspace as a passing/yield bay, then retry once.
+				self:yieldForTurtleTraffic(4)
+				moved,_,moveReason = digFunc(self)
+			end
+			if not moved then
+				-- If the step still cannot be made, only use already-open roads
+				-- for recovery. No collision recovery is allowed to dig a bypass.
 				if i < length - 1 then
 					local newPos = self.pos + directionVector * 2
 					if not self:navigateOpenPathToPos(newPos.x, newPos.y, newPos.z) then
