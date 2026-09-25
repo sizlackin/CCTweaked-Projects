@@ -3710,11 +3710,15 @@ function Miner:placeTunnelTorchNiche(side)
 
 	-- The upper tunnel cell must be open; never dig upward just to place light.
 	local blockedUp = turtle.inspectUp()
-	if blockedUp or not self:up() then
+	if blockedUp or not turtle.up() then
 		self:turnTo(startOrientation)
 		self:select(startSlot)
 		return false
 	end
+	-- Temporary placement movement is not a navigable road edge.
+	self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+	self.pos.y = self.pos.y + 1
+	self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
 
 	local sideOffset = (side or -1) < 0 and -1 or 1
 	self:turnTo(startOrientation + sideOffset)
@@ -3753,7 +3757,10 @@ function Miner:placeTunnelTorchNiche(side)
 	-- to mine; give it a brief chance to clear.
 	local returned = false
 	for _=1,20 do
-		if self:down() then
+		if turtle.down() then
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
+			self.pos.y = self.pos.y - 1
+			self:setMapValue(self.pos.x,self.pos.y,self.pos.z,0)
 			returned = true
 			break
 		end
