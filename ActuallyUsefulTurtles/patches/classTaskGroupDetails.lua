@@ -62,13 +62,19 @@ end
 
 function GroupDetails:cancelTask()
 	self.group:cancel()
+	-- LABENHANCED_AREA_LIFECYCLE
+	if self.mapDisplay and self.group then
+		self.mapDisplay:removeGroupArea(self.group.id)
+	end
 end
 
 function GroupDetails:openMap()
 	if self.hostDisplay and self.mapDisplay then
 		local start, finish, focus = self.group:getAreaDetails()
 		if not start then return end
-		table.insert(self.mapDisplay.areas, {start = start, finish = finish, color = self.group:getStatusColor()})
+		-- LABENHANCED_AREA_LIFECYCLE
+		-- Upsert one managed outline for this group; terminal groups have none.
+		self.mapDisplay:setGroupArea(self.group)
 		self.mapDisplay:setMid(focus.x, focus.y, focus.z)
 		self.hostDisplay:displayMap()
 	end
@@ -157,7 +163,8 @@ function GroupDetails:initializeMiniMap()
 	local start, finish, focus = self.group:getAreaDetails()
 	if focus then
 		self.winMap:setMid(focus.x, focus.y, focus.z)
-		table.insert(self.winMap.areas, {start = start, finish = finish, color = self.group:getStatusColor()})
+		-- LABENHANCED_AREA_LIFECYCLE
+		self.winMap:setGroupArea(self.group)
 	end
 	self.winMap:hideControls()
 	self.winMap.handleClick = function(x,y) self:openMap() end
@@ -285,16 +292,29 @@ function GroupDetails:refresh()
 	winInfo.btnCancelTask.visible = active
 	winInfo.btnDeleteGroup.visible = not active
 
+	-- Keep the mini-map lifecycle in sync too. Completion/cancellation
+	-- removes its rectangle without requiring this details window to be reopened.
+	if self.winMap then
+		self.winMap:setGroupArea(group)
+	end
+
 	self.turtleList:refresh()
 	self.winMap:refresh()
 end
 
 function GroupDetails:deleteGroup()
+	local groupId = self.group and self.group.id
+	if self.mapDisplay and groupId then
+		self.mapDisplay:removeGroupArea(groupId)
+	end
+	if self.winMap and groupId then
+		self.winMap:removeGroupArea(groupId)
+	end
 	if self.group then 
 		self.group:delete()
 	end
 	if self.hostDisplay then
-		self.hostDisplay:deleteGroup(self.group.id)
+		self.hostDisplay:deleteGroup(groupId)
 	end
 	return true
 end
