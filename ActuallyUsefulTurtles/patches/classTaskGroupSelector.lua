@@ -527,14 +527,11 @@ function TaskGroupSelector:deselectArea()
 	self:clearSelectionOverlay()
 	self:clearAreaControls()
 	self.selectionMode = true
+	self.cursorMode = false
 	self:refresh()
 	if self.mapDisplay then
-		self.mapDisplay.onPositionSelected = function(objRef,x,y,z)
-			self:onAreaSelected(x,y,z)
-		end
-		self.mapDisplay:selectPosition()
 		self.mapDisplay.fullRedraw = true
-		self.mapDisplay:redraw()
+		self:setMapInteractionMode(false)
 	end
 end
 
