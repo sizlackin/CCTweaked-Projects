@@ -3731,8 +3731,16 @@ function Miner:tunnel(length, direction, noInspect)
 				-- LABENHANCED_COOP_MINING_TRAFFIC
 				-- We should not queue behind another working turtle. Use the
 				-- open 2-high headspace as a passing/yield bay, then retry once.
-				self:yieldForTurtleTraffic(4)
-				moved,_,moveReason = digFunc(self)
+				local yielded = self:yieldForTurtleTraffic(4)
+				if yielded then
+					moved,_,moveReason = digFunc(self)
+				else
+					-- If we could not safely rejoin the floor lane, do not ever
+					-- continue mining from the upper cell.
+					self.lastNavigationFailureReason = "traffic_jam_timeout"
+					result = false
+					break
+				end
 			end
 			if not moved then
 				-- If the step still cannot be made, only use already-open roads
