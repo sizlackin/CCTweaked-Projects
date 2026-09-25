@@ -1,0 +1,281 @@
+#!/usr/bin/env python3
+"""Deploy repo source onto the live Actually Useful Turtles controller (id 9).
+
+  ./tools/deploy-controller --dry-run            show exactly what would change
+  ./tools/deploy-controller                      deploy every changed mapped file
+  ./tools/deploy-controller gui/classMapDisplay.lua turtle/classMiner.lua
+  ./tools/deploy-controller --with-runtime        also refresh runtime/ copies
+  ./tools/deploy-controller --allow-regress       permit older-looking overwrites
+  ./tools/deploy-controller --yes                 skip the confirmation prompt
+
+Guarantees:
+  * refuses to run unless the target really is .../computer/9 and carries the
+    expected controller files
+  * every live file it is about to modify is backed up first, under
+    /home/cesar/Backups/ActuallyUsefulTurtles/deploy/<timestamp>/
+  * copies only files listed in tools/manifest.tsv
+  * never deletes anything
+  * never writes persistent runtime state (map, tunnel graph, stations,
+    queues, tasks, alerts); attempting to is a hard abort
+  * stops before deploying over a live file whose content appears nowhere in
+    this repo's history, because that is in-game work a deploy would destroy.
+    A live file that merely matches an older commit is deployed normally.
+
+Note on how the change reaches the running system: host/startup.lua copies
+general/ gui/ host/ storage/ into runtime/ on boot, but only when the source
+file's mtime is newer than the runtime copy's. Deploy sets mtime to now so that
+comparison always fires.
+"""
+
+import argparse
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from aut_common import (  # noqa: E402
+    CONTROLLER_DIRS, DEPLOY_BACKUPS, DIFFER, LIVE, NO_LIVE, NO_REPO, REPO, SAME,
+    TURTLE_DIRS, TURTLE_IDS, assert_safe_target, bold, blue, compare, die, green,
+    live_is_known, load_manifest, red, sha, timestamp, unified_diff,
+    verify_live_root, yellow,
+)
+
+
+def git_head_blob(repo_rel: str):
+    r = subprocess.run(["git", "-C", str(REPO), "show", f"HEAD:{repo_rel}"],
+                       capture_output=True)
+    if r.returncode != 0:
+        return None
+    import hashlib
+    return hashlib.sha256(r.stdout).hexdigest()
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("files", nargs="*", metavar="LIVE_PATH")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--with-runtime", action="store_true",
+                    help="also write the runtime/ twin so changes apply without a reboot")
+    ap.add_argument("--allow-regress", action="store_true",
+                    help="deploy even where live has drifted ahead of the repo's last commit")
+    ap.add_argument("--yes", "-y", action="store_true")
+    ap.add_argument("--show", action="store_true", help="print diffs before deploying")
+    args = ap.parse_args()
+
+    verify_live_root()
+    entries = load_manifest()
+    by_live = {e.live_rel: e for e in entries}
+
+    if args.files:
+        unknown = [f for f in args.files if f not in by_live]
+        if unknown:
+            print(red("not in tools/manifest.tsv:"), file=sys.stderr)
+            for u in unknown:
+                print(f"  {u}", file=sys.stderr)
+            print("\nRun ./tools/diff-controller to see valid targets.", file=sys.stderr)
+            return 2
+        selected = [by_live[f] for f in args.files]
+    else:
+        selected = entries
+
+    changed, regressions, missing_repo = [], [], []
+    for e in selected:
+        st = compare(e)
+        if st == NO_REPO:
+            missing_repo.append(e)
+            continue
+        if st == SAME:
+            continue
+        # st is DIFFER or NO_LIVE -> both are deployable
+        head = git_head_blob(e.repo_rel)
+        if st == DIFFER and head is not None:
+            repo_now = sha(e.repo_path)
+            live_now = sha(e.live_path)
+            # Repo unchanged since its last commit but live differs from it.
+            # Only a problem when live's content is unknown to this repo's
+            # history; if it matches an older commit, live is merely behind and
+            # deploying is exactly what we want.
+            if repo_now == head and live_now != head and not live_is_known(e):
+                regressions.append(e)
+                continue
+        changed.append((e, st))
+
+    print(bold("Deploy plan"))
+    print(f"  repo : {REPO}")
+    print(f"  live : {LIVE}")
+    print(f"  mode : {'DRY RUN' if args.dry_run else 'LIVE WRITE'}"
+          + ("  +runtime" if args.with_runtime else ""))
+    print()
+
+    if missing_repo and args.files:
+        print(yellow("No repo source for these (skipped):"))
+        for e in missing_repo:
+            print(f"  {e.live_rel}  expected at {e.repo_rel}")
+        print()
+
+    if regressions and not args.allow_regress:
+        print(red(bold("REFUSING: live holds content this repo has never seen.")))
+        print("The repo copy matches its last commit, and the live copy matches no")
+        print("commit in this repo's history - so it is in-game work that only exists")
+        print("on the controller, and deploying would destroy it.\n")
+        for e in regressions:
+            print(f"  {red(e.live_rel)}   source: {e.repo_rel}")
+        print("\nResolve it one of these ways:")
+        print("  ./tools/import-live                  capture live into the repo, then commit")
+        print("  ./tools/diff-controller --show <p>   inspect the difference first")
+        print("  ./tools/deploy-controller --allow-regress   deploy anyway (overwrites live)")
+        if not changed:
+            return 3
+        print(yellow("\nContinuing with the remaining files only.\n"))
+    elif regressions:
+        print(yellow(f"--allow-regress: {len(regressions)} file(s) where live is ahead "
+                     "WILL be overwritten:"))
+        for e in regressions:
+            print(f"  {red(e.live_rel)}")
+        print()
+        changed.extend((e, DIFFER) for e in regressions)
+
+    if not changed:
+        print(green("Nothing to deploy - live already matches the repo."))
+        return 0
+
+    # ---- show the plan -------------------------------------------------
+    ctrl_reboot = sorted({e.live_rel for e, _ in changed if e.needs_controller_reboot})
+    turtle_reboot = sorted({e.live_rel for e, _ in changed if e.needs_turtle_reboot})
+
+    print(bold(f"{len(changed)} file(s) will change:"))
+    for e, st in changed:
+        tag = "NEW ON CONTROLLER" if st == NO_LIVE else "update"
+        old = e.live_path.stat().st_size if e.live_path.is_file() else 0
+        new = e.repo_path.stat().st_size
+        who = []
+        if e.needs_controller_reboot:
+            who.append("controller")
+        if e.needs_turtle_reboot:
+            who.append("turtles")
+        print(f"  {tag:<18} {e.live_rel:<38} {old} -> {new} B   "
+              f"{blue(e.origin)}  [{'+'.join(who)}]")
+        print(f"                     from {e.repo_rel}")
+
+    if args.show:
+        for e, st in changed:
+            if st == NO_LIVE:
+                continue
+            print(bold(f"\n{'=' * 72}\n{e.live_rel}\n{'=' * 72}"))
+            print(unified_diff(e))
+
+    print(bold("\nWill NOT be touched:"))
+    print("  runtime/tunnelMap.txt, runtime/map/, runtime/stations.txt,")
+    print("  runtime/taskData.txt, runtime/turtles.txt, runtime/alerts.txt, log.txt")
+    if not args.with_runtime:
+        print("  runtime/*.lua  (host/startup.lua rebuilds these on boot)")
+
+    if args.dry_run:
+        print(yellow("\n--dry-run: nothing was written."))
+        print_reboot_notice(ctrl_reboot, turtle_reboot, args.with_runtime, dry=True)
+        return 0
+
+    if not args.yes:
+        try:
+            reply = input(bold(f"\nDeploy {len(changed)} file(s) to controller 9? [y/N] "))
+        except EOFError:
+            reply = ""
+        if reply.strip().lower() not in ("y", "yes"):
+            print("aborted, nothing written")
+            return 1
+
+    # ---- back up every file we are about to modify ----------------------
+    stamp = timestamp()
+    bdir = DEPLOY_BACKUPS / stamp
+    bdir.mkdir(parents=True, exist_ok=False)
+    manifest_lines, backed = [], 0
+    for e, st in changed:
+        if e.live_path.is_file():
+            dest = bdir / e.live_rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(e.live_path, dest)
+            backed += 1
+            manifest_lines.append(f"{e.live_rel}\t{e.repo_rel}\trestore")
+        else:
+            manifest_lines.append(f"{e.live_rel}\t{e.repo_rel}\tcreated-by-deploy")
+    (bdir / "DEPLOY-MANIFEST.tsv").write_text(
+        "# live_path\trepo_path\taction-on-rollback\n" + "\n".join(manifest_lines) + "\n"
+    )
+    (bdir / "DEPLOY-INFO.txt").write_text(
+        f"timestamp: {stamp}\nlive: {LIVE}\nrepo: {REPO}\n"
+        f"files_changed: {len(changed)}\nfiles_backed_up: {backed}\n"
+        f"with_runtime: {args.with_runtime}\n"
+        f"git_head: {subprocess.run(['git', '-C', str(REPO), 'rev-parse', 'HEAD'], capture_output=True, text=True).stdout.strip()}\n"
+    )
+    print(green(f"\nBacked up {backed} live file(s) -> {bdir}"))
+
+    # ---- write ----------------------------------------------------------
+    written, runtime_written = [], []
+    for e, st in changed:
+        assert_safe_target(e.live_rel)
+        e.live_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(e.repo_path, e.live_path)
+        # mtime = now, so host/startup.lua's newer-than test fires on boot
+        e.live_path.touch()
+        written.append(e.live_rel)
+
+        if args.with_runtime and e.live_dir in CONTROLLER_DIRS:
+            rel = f"runtime/{Path(e.live_rel).name}"
+            assert_safe_target(rel, allow_runtime=True)
+            rt = LIVE / rel
+            if rt.is_file():
+                dest = bdir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(rt, dest)
+            shutil.copyfile(e.repo_path, rt)
+            rt.touch()
+            runtime_written.append(rel)
+
+    print(bold(f"\nWrote {len(written)} file(s):"))
+    for p in written:
+        print(f"  {green('updated')} {p}")
+    for p in runtime_written:
+        print(f"  {green('updated')} {p}   (runtime twin)")
+    print(green("\nNo files were deleted. No runtime state was touched."))
+
+    print_reboot_notice(ctrl_reboot, turtle_reboot, args.with_runtime, dry=False)
+    print(f"\nRoll back this deploy with:\n  ./tools/rollback-controller {stamp}")
+    return 0
+
+
+def print_reboot_notice(ctrl, turtles, with_runtime, dry):
+    print(bold("\nRestart requirements"))
+    if ctrl:
+        if with_runtime and not dry:
+            print(f"  controller: {yellow('recommended')} - runtime/ was refreshed in place, "
+                  "but the running tabs still hold the old code in memory.")
+        else:
+            print(f"  controller: {red('REQUIRED')} - {len(ctrl)} file(s) in "
+                  "general/gui/host/storage changed.")
+            print("              On boot, host/startup.lua copies them into runtime/")
+            print("              and reboots once more by itself.")
+        for p in ctrl[:8]:
+            print(f"                {p}")
+        if len(ctrl) > 8:
+            print(f"                ... and {len(ctrl) - 8} more")
+        print("              In game, on computer 9:  reboot")
+    else:
+        print(f"  controller: {green('not required')} - no controller-side file changed.")
+
+    if turtles:
+        print(f"  turtles   : {red('REQUIRED')} for {', '.join(TURTLE_IDS)} - "
+              f"{len(turtles)} file(s) in general/turtle/storage changed.")
+        print("              Each turtle pulls these from the controller via")
+        print("              runtime/update.lua at boot, then reboots itself.")
+        for p in turtles[:8]:
+            print(f"                {p}")
+        if len(turtles) > 8:
+            print(f"                ... and {len(turtles) - 8} more")
+        print("              Reboot the controller FIRST, then the turtles.")
+    else:
+        print(f"  turtles   : {green('not required')} - no turtle-side file changed.")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

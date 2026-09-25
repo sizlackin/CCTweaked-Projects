@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""Restore live controller files from a previous deploy backup.
+
+  ./tools/rollback-controller                       list recent deploys
+  ./tools/rollback-controller <timestamp>           restore that deploy's files
+  ./tools/rollback-controller <timestamp> --dry-run
+  ./tools/rollback-controller <timestamp> gui/classMapDisplay.lua   one file
+  ./tools/rollback-controller --from-full <stamp> <live_path>...    pull specific
+                                                    files from a full snapshot
+
+Only files recorded in that deploy are restored. Runtime state is never
+written, and files the deploy newly created are reported rather than deleted -
+rollback does not delete anything.
+"""
+
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from aut_common import (  # noqa: E402
+    CONTROLLER_DIRS, DEPLOY_BACKUPS, FULL_BACKUPS, LIVE, TURTLE_IDS,
+    assert_safe_target, bold, blue, die, green, is_protected, red, sha,
+    timestamp, verify_live_root, yellow,
+)
+
+
+def read_manifest(bdir: Path):
+    mf = bdir / "DEPLOY-MANIFEST.tsv"
+    if not mf.is_file():
+        die(f"no DEPLOY-MANIFEST.tsv in {bdir}")
+    rows = []
+    for line in mf.read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) >= 3:
+            rows.append((parts[0], parts[1], parts[2]))
+    return rows
+
+
+def list_deploys():
+    if not DEPLOY_BACKUPS.is_dir() or not any(DEPLOY_BACKUPS.iterdir()):
+        print("no deploy backups yet")
+        return
+    print(bold(f"Deploy backups in {DEPLOY_BACKUPS}"))
+    for d in sorted((p for p in DEPLOY_BACKUPS.iterdir() if p.is_dir()), reverse=True):
+        info = {}
+        f = d / "DEPLOY-INFO.txt"
+        if f.is_file():
+            for line in f.read_text().splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    info[k.strip()] = v.strip()
+        rows = read_manifest(d) if (d / "DEPLOY-MANIFEST.tsv").is_file() else []
+        restorable = [r for r in rows if r[2] == "restore"]
+        created = [r for r in rows if r[2] == "created-by-deploy"]
+        print(f"\n  {bold(d.name)}   {len(restorable)} restorable"
+              + (f", {len(created)} newly created" if created else ""))
+        if info.get("git_head"):
+            print(f"    repo HEAD at deploy: {info['git_head'][:12]}")
+        for live_rel, _, action in rows:
+            mark = green("restore") if action == "restore" else yellow("was created")
+            print(f"      {mark:<18} {live_rel}")
+    print(f"\n  Full snapshots live in {FULL_BACKUPS} (see backup-controller --list)")
+
+
+def restore(pairs, dry, label):
+    """pairs: list of (source_file, live_rel)."""
+    if not pairs:
+        print(green("nothing to restore"))
+        return 0
+
+    print(bold(f"{'Would restore' if dry else 'Restoring'} {len(pairs)} file(s) from {label}"))
+    changed = []
+    for src, live_rel in pairs:
+        lp = LIVE / live_rel
+        if lp.is_file() and sha(lp) == sha(src):
+            print(f"  {blue('already matches'):<22} {live_rel}")
+            continue
+        cur = lp.stat().st_size if lp.is_file() else 0
+        print(f"  {'restore':<14} {live_rel:<38} {cur} -> {src.stat().st_size} B")
+        changed.append((src, live_rel))
+
+    if not changed:
+        print(green("\nLive already matches that backup for every file."))
+        return 0
+    if dry:
+        print(yellow("\n--dry-run: nothing written"))
+        return 0
+
+    # safety net: snapshot current state of the files we are about to overwrite
+    stamp = timestamp()
+    pre = DEPLOY_BACKUPS / f"{stamp}_pre-rollback"
+    pre.mkdir(parents=True, exist_ok=False)
+    lines = []
+    for _, live_rel in changed:
+        lp = LIVE / live_rel
+        if lp.is_file():
+            d = pre / live_rel
+            d.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(lp, d)
+            lines.append(f"{live_rel}\t-\trestore")
+    (pre / "DEPLOY-MANIFEST.tsv").write_text(
+        "# live_path\trepo_path\taction-on-rollback\n" + "\n".join(lines) + "\n")
+    (pre / "DEPLOY-INFO.txt").write_text(
+        f"timestamp: {stamp}\nkind: pre-rollback snapshot\nrestored_from: {label}\n")
+    print(green(f"\nCurrent state saved first -> {pre}"))
+
+    for src, live_rel in changed:
+        assert_safe_target(live_rel, allow_runtime=live_rel.startswith("runtime/"))
+        lp = LIVE / live_rel
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, lp)
+        lp.touch()  # force host/startup.lua to re-copy into runtime/ on boot
+        print(f"  {green('restored')} {live_rel}")
+
+    ctrl = sorted({p for _, p in changed if p.split("/")[0] in CONTROLLER_DIRS})
+    turt = sorted({p for _, p in changed
+                   if p.split("/")[0] in ("general", "turtle", "storage")})
+    print(bold("\nRestart requirements"))
+    print(f"  controller: {red('REQUIRED') if ctrl else green('not required')}"
+          + (f" ({len(ctrl)} file(s)) - in game: reboot" if ctrl else ""))
+    print(f"  turtles   : {red('REQUIRED') if turt else green('not required')}"
+          + (f" ({len(turt)} file(s)) for {', '.join(TURTLE_IDS)}" if turt else ""))
+    print(green("\nNo files were deleted. No runtime state was touched."))
+    print(f"\nUndo this rollback with:\n  ./tools/rollback-controller {stamp}_pre-rollback")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("stamp", nargs="?", help="deploy backup timestamp")
+    ap.add_argument("files", nargs="*", metavar="LIVE_PATH",
+                    help="restore only these paths")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--from-full", metavar="STAMP",
+                    help="restore from a full snapshot instead of a deploy backup")
+    args = ap.parse_args()
+
+    if args.from_full:
+        verify_live_root()
+        bdir = FULL_BACKUPS / args.from_full
+        if not bdir.is_dir():
+            die(f"no full snapshot named {args.from_full} in {FULL_BACKUPS}")
+        wanted = ([args.stamp] if args.stamp else []) + args.files
+        if not wanted:
+            die("--from-full needs at least one live path, e.g. gui/classMapDisplay.lua\n"
+                "       (restoring a whole snapshot blindly would overwrite runtime state)")
+        pairs = []
+        for rel in wanted:
+            if is_protected(rel):
+                die(f"refusing to restore persistent runtime state: {rel}")
+            src = bdir / rel
+            if not src.is_file():
+                die(f"{rel} is not in snapshot {args.from_full}")
+            pairs.append((src, rel))
+        return restore(pairs, args.dry_run, f"full snapshot {args.from_full}")
+
+    if not args.stamp:
+        list_deploys()
+        return 0
+
+    verify_live_root()
+    bdir = DEPLOY_BACKUPS / args.stamp
+    if not bdir.is_dir():
+        die(f"no deploy backup named {args.stamp}\n"
+            f"       run ./tools/rollback-controller with no arguments to list them")
+
+    rows = read_manifest(bdir)
+    created = [r[0] for r in rows if r[2] == "created-by-deploy"]
+    pairs = []
+    for live_rel, _repo_rel, action in rows:
+        if action != "restore":
+            continue
+        if args.files and live_rel not in args.files:
+            continue
+        if is_protected(live_rel):
+            die(f"backup manifest contains persistent state, refusing: {live_rel}")
+        src = bdir / live_rel
+        if not src.is_file():
+            die(f"backup is incomplete, missing: {live_rel}")
+        pairs.append((src, live_rel))
+
+    if args.files:
+        known = {r[0] for r in rows}
+        for f in args.files:
+            if f not in known:
+                die(f"{f} was not part of deploy {args.stamp}")
+
+    rc = restore(pairs, args.dry_run, f"deploy {args.stamp}")
+    if created and not args.files:
+        print(yellow(f"\n{len(created)} file(s) were newly created by that deploy and have "
+                     "no previous version:"))
+        for p in created:
+            print(f"  {p}")
+        print("  Rollback leaves them in place; delete them by hand in game if you want "
+              "them gone.")
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())

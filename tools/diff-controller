@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""Compare repo source against the live Actually Useful Turtles controller.
+
+  ./tools/diff-controller                 status table for every manifest entry
+  ./tools/diff-controller --show          also print unified diffs for changes
+  ./tools/diff-controller --show gui/classMapDisplay.lua   diff one file
+  ./tools/diff-controller --only-changed  hide identical files
+  ./tools/diff-controller --installers    also compare the wget installer scripts
+
+Read-only: this never writes to the controller or the repo.
+
+Status meanings, resolved against three points - git HEAD, your working tree,
+and the live controller:
+
+  identical        repo and live agree
+  modified-local   you edited the repo and have not deployed it yet
+  live-behind      repo is ahead of live, and live's content matches an older
+                   commit in this repo - a normal, safe deploy
+  live-drifted     live holds content this repo has never seen - in-game work
+                   that a deploy would destroy. Capture it with import-live.
+  both-changed     you edited the repo AND live differs from HEAD too
+  missing-repo     mapped but the repo file is absent
+  missing-live     mapped but the live file is absent
+"""
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from aut_common import (  # noqa: E402
+    AUT, LIVE, REPO, DIFFER, NO_LIVE, NO_REPO, SAME,
+    GENERATED_OR_BOOTSTRAP, bold, blue, compare, green, is_protected, load_manifest,
+    live_is_known, live_source_files, red, sha, unified_diff, verify_live_root,
+    yellow,
+)
+
+
+def git_head_blob(repo_rel: str):
+    """sha256 of this path's content at HEAD, or None if not committed."""
+    r = subprocess.run(["git", "-C", str(REPO), "show", f"HEAD:{repo_rel}"],
+                       capture_output=True)
+    if r.returncode != 0:
+        return None
+    import hashlib
+    return hashlib.sha256(r.stdout).hexdigest()
+
+
+def classify(e):
+    base = compare(e)
+    if base in (NO_REPO, NO_LIVE):
+        return {"missing-repo" if base == NO_REPO else "missing-live"}, base
+    if base == SAME:
+        return {"identical"}, base
+
+    head = git_head_blob(e.repo_rel)
+    repo_now = sha(e.repo_path)
+    live_now = sha(e.live_path)
+
+    if head is None:
+        return {"modified-local"}, base          # new, never committed
+    local_edited = head != repo_now
+    live_vs_head = head != live_now
+    if local_edited and live_vs_head:
+        return {"both-changed"}, base
+    if local_edited:
+        return {"modified-local"}, base
+    # Repo matches its last commit but live does not. Two very different cases:
+    # live is behind a commit we know about, or live holds unknown content.
+    if live_is_known(e):
+        return {"live-behind"}, base
+    return {"live-drifted"}, base
+
+
+STATUS_STYLE = {
+    "identical": green,
+    "modified-local": yellow,
+    "live-behind": blue,
+    "live-drifted": red,
+    "both-changed": red,
+    "missing-repo": red,
+    "missing-live": red,
+}
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--show", nargs="?", const="__all__", default=None,
+                    metavar="LIVE_PATH", help="print unified diffs (optionally one file)")
+    ap.add_argument("--only-changed", action="store_true")
+    ap.add_argument("--installers", action="store_true",
+                    help="also compare root installer scripts (informational)")
+    ap.add_argument("--context", type=int, default=3)
+    args = ap.parse_args()
+
+    verify_live_root()
+    entries = load_manifest()
+
+    print(bold("Source  <->  live controller 9"))
+    print(f"  repo : {REPO}")
+    print(f"  live : {LIVE}\n")
+
+    rows, counts = [], {}
+    for e in entries:
+        st, _ = classify(e)
+        st = next(iter(st))
+        counts[st] = counts.get(st, 0) + 1
+        rows.append((e, st))
+
+    width = max(len(e.live_rel) for e, _ in rows)
+    shown = 0
+    for e, st in rows:
+        if args.only_changed and st == "identical":
+            continue
+        shown += 1
+        style = STATUS_STYLE[st]
+        print(f"  {e.live_rel:<{width}}  {style(st):<22}  {blue(e.origin)}")
+        if st != "identical":
+            print(f"    {'':<{width - 2}}  source: {e.repo_rel}")
+    if shown == 0:
+        print(green("  everything identical"))
+
+    print(bold("\nSummary"))
+    for st in ("identical", "modified-local", "live-behind", "live-drifted",
+               "both-changed", "missing-repo", "missing-live"):
+        if counts.get(st):
+            print(f"  {STATUS_STYLE[st](st):<22} {counts[st]}")
+
+    # ---- unmapped -------------------------------------------------------
+    mapped_live = {e.live_rel for e in entries}
+    unmapped_live = [p for p in live_source_files() if p not in mapped_live]
+
+    root_live = sorted(
+        p.name for p in LIVE.iterdir()
+        if p.is_file() and p.name not in GENERATED_OR_BOOTSTRAP
+    )
+    mapped_repo = {e.repo_rel for e in entries}
+    unmapped_repo = []
+    for sub in ("patches", "tunnelnav", "controller"):
+        d = AUT / sub
+        if d.is_dir():
+            for p in sorted(d.rglob("*")):
+                if p.is_file():
+                    rel = str(p.relative_to(REPO))
+                    if rel not in mapped_repo:
+                        unmapped_repo.append(rel)
+
+    if unmapped_live:
+        print(bold("\nUnmapped live source files ") + "(not in manifest, never deployed to)")
+        for p in unmapped_live:
+            print(f"  {yellow(p)}")
+    if unmapped_repo:
+        print(bold("\nUnmapped repo source files ") + "(in patches/tunnelnav/controller, no live target)")
+        for p in unmapped_repo:
+            print(f"  {yellow(p)}")
+
+    print(bold("\nLive files outside the manifest ") + "(state, installers, generated)")
+    for name in root_live:
+        tag = "persistent state" if is_protected(name) else "installer / script"
+        print(f"  {name:<42} {tag}")
+    print(f"  {'runtime/':<42} assembled copy + persistent state (never a deploy target)")
+
+    # ---- installers -----------------------------------------------------
+    if args.installers:
+        print(bold("\nInstaller scripts: repo vs live") + "  (one-shot wget scripts, not deploy targets)")
+        repo_inst = {p.name: p for p in sorted(AUT.glob("*.lua"))}
+        live_inst = {p.name: p for p in sorted(LIVE.iterdir())
+                     if p.is_file() and p.name not in GENERATED_OR_BOOTSTRAP}
+        names = sorted({n[:-4] if n.endswith(".lua") else n
+                        for n in list(repo_inst) + list(live_inst)})
+        for stem in names:
+            rp = repo_inst.get(stem + ".lua")
+            lp = live_inst.get(stem) or live_inst.get(stem + ".lua")
+            if rp and lp:
+                same = rp.read_bytes() == lp.read_bytes()
+                state = green("identical") if same else yellow("differs")
+            elif rp:
+                state = blue("repo only (never run here)")
+            else:
+                state = red("live only (NOT IN REPO)")
+            print(f"  {stem:<42} {state}")
+
+    # ---- diffs ----------------------------------------------------------
+    if args.show:
+        targets = [(e, st) for e, st in rows if st != "identical"]
+        if args.show != "__all__":
+            targets = [(e, st) for e, st in targets if e.live_rel == args.show
+                       or e.repo_rel.endswith(args.show)]
+            if not targets:
+                print(f"\n{yellow('no changed manifest entry matches')} {args.show}")
+        for e, st in targets:
+            print(bold(f"\n{'=' * 72}\n{e.live_rel}  [{st}]\n{'=' * 72}"))
+            d = unified_diff(e, args.context)
+            print(d if d.strip() else "(one side missing)")
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,143 @@
+
+local utils = {}
+
+
+
+local abs = math.abs
+local sqrt = math.sqrt
+local min = math.min
+local max = math.max
+local floor = math.floor
+local mathrandom = math.random
+
+local tableinsert = table.insert
+local stringgsub = string.gsub
+local stringformat = string.format
+local vectornew = vector.new
+
+function utils.loadExtension(extensionModule, targetClass)
+    for name, func in pairs(extensionModule) do
+        if type(func) == "function" then
+            targetClass[name] = func
+        end
+    end
+end
+
+function utils.manhattanDistance(x1, y1, z1, x2, y2, z2)
+    return abs(x1 - x2) + abs(y1 - y2) + abs(z1 - z2)
+end
+function utils.euclideanDistance(x1, y1, z1, x2, y2, z2)
+    local dx = x1 - x2
+    local dy = y1 - y2
+    local dz = z1 - z2
+    return sqrt(dx*dx + dy*dy + dz*dz)
+end
+function utils.squaredDistance(x1, y1, z1, x2, y2, z2)
+    local dx = x1 - x2
+    local dy = y1 - y2
+    local dz = z1 - z2
+    return dx*dx + dy*dy + dz*dz
+end
+function utils.squaredDistancePos(a, b)
+    local dx = a.x - b.x
+    local dy = a.y - b.y
+    local dz = a.z - b.z
+    return dx*dx + dy*dy + dz*dz
+end
+
+
+
+
+utils.gpsLocate = function()
+    local pos, floatPos = nil, nil
+    local x,y,z
+    if gps then 
+        x, y, z = gps.locate()
+        if x and y and z then
+            floatPos = vectornew(x,y,z)
+            x, y, z = floor(x), floor(y), floor(z)
+            pos = vectornew(x, y, z)
+        end
+    end
+    return pos, floatPos
+end
+
+function utils.generateUUID(simple)
+    if simple then
+        return mathrandom(1, 2147483647)
+    else 
+        local template ='xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'
+        return stringgsub(template, '[xy]', function (c)
+            local v = (c == 'x') and mathrandom(0, 0xf) or mathrandom(8, 0xb)
+            return stringformat('%x', v)
+        end)
+    end
+end
+
+
+function utils.callObjectFunction(obj, funcName, args)
+    if not args then args = {} end
+    local func = "return function(obj,funcName,args) local res = table.pack(obj:"..funcName.."(table.unpack(args))) return table.unpack(res) end"
+    return load(func)()(obj, funcName, args)
+end
+
+local osClock = os.clock
+local startTimer = os.startTimer
+local pullEventRaw = os.pullEventRaw
+local tickTimers = {}
+local cancelledTimers = {}
+local lastTick = nil
+
+function utils.sleep(waitTime)
+    -- safe sleep function
+
+    -- nil == 0 == 0.05 == 1 tick
+    if not waitTime then waitTime = 0
+    elseif waitTime == 0.05 then waitTime = 0 end
+
+	local tick = osClock()
+    if lastTick ~= tick then
+        -- new tick, clear old timers
+        tickTimers = {}
+        lastTick = tick
+    end
+
+	local timer = tickTimers[waitTime]
+	if not timer then
+		timer = startTimer(waitTime)
+		tickTimers[waitTime] = timer
+	else
+		--print("reusing timer", waitTime, timer)
+	end
+
+    local safetyMargin = waitTime + 1
+	while true do
+		local event, param = pullEventRaw("timer")
+		--print(string.format("clock : %10s  param %10s  timer %10s waitTime %10s", osClock(), param, timer, waitTime))
+		if event == "timer" then
+			if param == timer then
+				return
+            elseif osClock() - tick > safetyMargin then
+                print(timer, "TIMER MISSED", osClock() - tick, "expected", waitTime, "cancelled", cancelledTimers[timer])
+                return
+            end
+		elseif event == "terminate" then
+            error("Terminated",0)
+        end
+            
+	end
+end
+_G.sleep = utils.sleep
+
+
+-- cancelTimer not needed
+local originalCancelTimer = os.cancelTimer
+function utils.cancelTimer(timer)
+    cancelledTimers[timer] = true
+    -- print("cancelled timer", timer)
+    originalCancelTimer(timer)
+end
+
+_G.os.cancelTimer = utils.cancelTimer
+
+return utils

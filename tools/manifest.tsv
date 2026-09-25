@@ -1,0 +1,101 @@
+# Actually Useful Turtles - explicit source -> live file manifest
+#
+# repo_path is relative to the repository root.
+# live_path is relative to the live controller directory
+#   .../saves/The Fuckening/computercraft/computer/9
+#
+# origin:
+#   patch      custom patched file, also served to the wget installers from patches/
+#   tunnelnav  shared tunnel navigation source, served from tunnelnav/
+#   vendor     upstream Actually Useful Turtles file, tracked so it is comparable
+#
+# Reboot rules are derived from the live directory, not stored here:
+#   general/ storage/  -> controller AND turtles (host copies to runtime/,
+#                         turtle/update.lua pulls these folders)
+#   gui/ host/         -> controller only
+#   turtle/            -> turtles only
+#
+# Never list anything under runtime/ here. runtime/ is the controller's own
+# assembled copy plus persistent state; host/startup.lua rebuilds it on boot.
+#
+# repo_path	live_path	origin
+ActuallyUsefulTurtles/patches/blockColor.lua	general/blockColor.lua	patch
+ActuallyUsefulTurtles/controller/general/blockTranslation.lua	general/blockTranslation.lua	vendor
+ActuallyUsefulTurtles/controller/general/bluenet.lua	general/bluenet.lua	vendor
+ActuallyUsefulTurtles/controller/general/classBluenetNode.lua	general/classBluenetNode.lua	vendor
+ActuallyUsefulTurtles/controller/general/classBreadthFirstSearch.lua	general/classBreadthFirstSearch.lua	vendor
+ActuallyUsefulTurtles/controller/general/classChunkyMap.lua	general/classChunkyMap.lua	vendor
+ActuallyUsefulTurtles/controller/general/classHeap.lua	general/classHeap.lua	vendor
+ActuallyUsefulTurtles/controller/general/classList.lua	general/classList.lua	vendor
+ActuallyUsefulTurtles/controller/general/classLogger.lua	general/classLogger.lua	vendor
+ActuallyUsefulTurtles/controller/general/classNetworkNode.lua	general/classNetworkNode.lua	vendor
+ActuallyUsefulTurtles/controller/general/classPathFinder.lua	general/classPathFinder.lua	vendor
+ActuallyUsefulTurtles/controller/general/classQueue.lua	general/classQueue.lua	vendor
+ActuallyUsefulTurtles/controller/general/classSimpleVector.lua	general/classSimpleVector.lua	vendor
+ActuallyUsefulTurtles/controller/general/classStateMap.lua	general/classStateMap.lua	vendor
+ActuallyUsefulTurtles/tunnelnav/classTunnelMap.lua	general/classTunnelMap.lua	tunnelnav
+ActuallyUsefulTurtles/controller/general/config.lua	general/config.lua	vendor
+ActuallyUsefulTurtles/controller/general/killRednet.lua	general/killRednet.lua	vendor
+ActuallyUsefulTurtles/controller/general/metadata.json	general/metadata.json	vendor
+ActuallyUsefulTurtles/controller/general/utils.lua	general/utils.lua	vendor
+ActuallyUsefulTurtles/controller/general/utilsSerialize.lua	general/utilsSerialize.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classBasicWindow.lua	gui/classBasicWindow.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classBox.lua	gui/classBox.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classButton.lua	gui/classButton.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classCheckBox.lua	gui/classCheckBox.lua	vendor
+ActuallyUsefulTurtles/patches/classChoiceSelector.lua	gui/classChoiceSelector.lua	patch
+ActuallyUsefulTurtles/controller/gui/classFrame.lua	gui/classFrame.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classGPU.lua	gui/classGPU.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classHostDisplay.lua	gui/classHostDisplay.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classLabel.lua	gui/classLabel.lua	vendor
+ActuallyUsefulTurtles/patches/classMapDisplay.lua	gui/classMapDisplay.lua	patch
+ActuallyUsefulTurtles/controller/gui/classMonitor.lua	gui/classMonitor.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classNumberInput.lua	gui/classNumberInput.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classOptionSelector.lua	gui/classOptionSelector.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classPixelDrawer.lua	gui/classPixelDrawer.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classScrollBar.lua	gui/classScrollBar.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classStorageDisplay.lua	gui/classStorageDisplay.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classStorageItemControl.lua	gui/classStorageItemControl.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classTaskControl.lua	gui/classTaskControl.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classTaskGroupControl.lua	gui/classTaskGroupControl.lua	vendor
+ActuallyUsefulTurtles/patches/classTaskGroupDetails.lua	gui/classTaskGroupDetails.lua	patch
+ActuallyUsefulTurtles/patches/classTaskGroupSelector.lua	gui/classTaskGroupSelector.lua	patch
+ActuallyUsefulTurtles/controller/gui/classTaskList.lua	gui/classTaskList.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classTaskSelector.lua	gui/classTaskSelector.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classToggleButton.lua	gui/classToggleButton.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classTurtleControl.lua	gui/classTurtleControl.lua	vendor
+ActuallyUsefulTurtles/controller/gui/classTurtleDetails.lua	gui/classTurtleDetails.lua	vendor
+ActuallyUsefulTurtles/patches/classTurtleList.lua	gui/classTurtleList.lua	patch
+ActuallyUsefulTurtles/controller/gui/classWindow.lua	gui/classWindow.lua	vendor
+ActuallyUsefulTurtles/controller/host/classComplexTask.lua	host/classComplexTask.lua	vendor
+ActuallyUsefulTurtles/controller/host/classLoadBalancer.lua	host/classLoadBalancer.lua	vendor
+ActuallyUsefulTurtles/controller/host/classRecurringProject.lua	host/classRecurringProject.lua	vendor
+ActuallyUsefulTurtles/controller/host/classTaskAssignment.lua	host/classTaskAssignment.lua	vendor
+ActuallyUsefulTurtles/patches/classTaskGroup.lua	host/classTaskGroup.lua	patch
+ActuallyUsefulTurtles/controller/host/classTaskManager.lua	host/classTaskManager.lua	vendor
+ActuallyUsefulTurtles/controller/host/display.lua	host/display.lua	vendor
+ActuallyUsefulTurtles/patches/host-global.lua	host/global.lua	patch
+ActuallyUsefulTurtles/controller/host/hostTransfer.lua	host/hostTransfer.lua	vendor
+ActuallyUsefulTurtles/patches/host-initialize.lua	host/initialize.lua	patch
+ActuallyUsefulTurtles/patches/host-main.lua	host/main.lua	patch
+ActuallyUsefulTurtles/patches/host-receive.lua	host/receive.lua	patch
+ActuallyUsefulTurtles/controller/host/send.lua	host/send.lua	vendor
+ActuallyUsefulTurtles/patches/host-startup.lua	host/startup.lua	patch
+ActuallyUsefulTurtles/controller/storage/classItemStorage.lua	storage/classItemStorage.lua	vendor
+ActuallyUsefulTurtles/controller/storage/classRemoteStorage.lua	storage/classRemoteStorage.lua	vendor
+ActuallyUsefulTurtles/controller/turtle/classCheckPointer.lua	turtle/classCheckPointer.lua	vendor
+ActuallyUsefulTurtles/patches/classMiner.lua	turtle/classMiner.lua	patch
+ActuallyUsefulTurtles/controller/turtle/classMinerTaskAssignment.lua	turtle/classMinerTaskAssignment.lua	vendor
+ActuallyUsefulTurtles/controller/turtle/classTaskQueue.lua	turtle/classTaskQueue.lua	vendor
+ActuallyUsefulTurtles/tunnelnav/classTunnelMapper.lua	turtle/classTunnelMapper.lua	tunnelnav
+ActuallyUsefulTurtles/tunnelnav/classTunnelNavigator.lua	turtle/classTunnelNavigator.lua	tunnelnav
+ActuallyUsefulTurtles/controller/turtle/classTurtleStorage.lua	turtle/classTurtleStorage.lua	vendor
+ActuallyUsefulTurtles/controller/turtle/extTreeMining.lua	turtle/extTreeMining.lua	vendor
+ActuallyUsefulTurtles/controller/turtle/extTurtleStorage.lua	turtle/extTurtleStorage.lua	vendor
+ActuallyUsefulTurtles/controller/turtle/global.lua	turtle/global.lua	vendor
+ActuallyUsefulTurtles/controller/turtle/initialize.lua	turtle/initialize.lua	vendor
+ActuallyUsefulTurtles/controller/turtle/main.lua	turtle/main.lua	vendor
+ActuallyUsefulTurtles/patches/turtle-receive.lua	turtle/receive.lua	patch
+ActuallyUsefulTurtles/patches/turtle-send.lua	turtle/send.lua	patch
+ActuallyUsefulTurtles/controller/turtle/startup.lua	turtle/startup.lua	vendor
+ActuallyUsefulTurtles/controller/turtle/update.lua	turtle/update.lua	vendor

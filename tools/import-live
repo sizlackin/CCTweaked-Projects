@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""Copy live controller code INTO the repo (live -> repo). The reverse of deploy.
+
+Use this when the live controller is ahead of the repo, which happens whenever
+an installer was run in game and the result was never committed.
+
+  ./tools/import-live --dry-run           show what would be imported
+  ./tools/import-live                     import every differing mapped file
+  ./tools/import-live --missing-only      only files with no repo copy yet
+  ./tools/import-live gui/classMapDisplay.lua ...   import specific files
+  ./tools/import-live --installers        also copy live-only installer scripts
+
+This only ever writes inside the repo working tree, never to the controller.
+Review with `git diff` and commit afterwards.
+"""
+
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from aut_common import (  # noqa: E402
+    AUT, LIVE, REPO, DIFFER, NO_LIVE, NO_REPO, SAME,
+    GENERATED_OR_BOOTSTRAP, bold, blue, compare, green, load_manifest, red, yellow,
+)
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("files", nargs="*", metavar="LIVE_PATH")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--missing-only", action="store_true")
+    ap.add_argument("--installers", action="store_true",
+                    help="also copy installer scripts that exist only on the controller")
+    args = ap.parse_args()
+
+    entries = load_manifest()
+    by_live = {e.live_rel: e for e in entries}
+
+    if args.files:
+        unknown = [f for f in args.files if f not in by_live]
+        if unknown:
+            print(red("not in the manifest:"), file=sys.stderr)
+            for u in unknown:
+                print(f"  {u}", file=sys.stderr)
+            return 2
+        selected = [by_live[f] for f in args.files]
+    else:
+        selected = entries
+
+    todo = []
+    for e in selected:
+        st = compare(e)
+        if st == NO_LIVE:
+            print(yellow(f"skip (absent on controller): {e.live_rel}"))
+            continue
+        if st == SAME:
+            continue
+        if args.missing_only and st != NO_REPO:
+            continue
+        todo.append((e, st))
+
+    inst_todo = []
+    if args.installers:
+        repo_names = {p.name for p in AUT.glob("*.lua")}
+        for p in sorted(LIVE.iterdir()):
+            if not p.is_file() or p.name in GENERATED_OR_BOOTSTRAP:
+                continue
+            stem = p.name[:-4] if p.name.endswith(".lua") else p.name
+            if stem + ".lua" not in repo_names and p.name not in repo_names:
+                inst_todo.append(p)
+
+    if not todo and not inst_todo:
+        print(green("repo already matches the controller for every mapped file"))
+        return 0
+
+    verb = "Would import" if args.dry_run else "Importing"
+    if todo:
+        print(bold(f"{verb} {len(todo)} mapped file(s) live -> repo"))
+        for e, st in todo:
+            label = "new" if st == NO_REPO else "update"
+            size = e.live_path.stat().st_size
+            print(f"  {label:<7} {e.live_rel:<38} -> {e.repo_rel}  ({size} B)  {blue(e.origin)}")
+    if inst_todo:
+        print(bold(f"\n{verb} {len(inst_todo)} controller-only installer script(s)"))
+        for p in inst_todo:
+            name = p.name if p.name.endswith(".lua") else p.name + ".lua"
+            print(f"  new     {p.name:<38} -> ActuallyUsefulTurtles/{name}")
+
+    if args.dry_run:
+        print(yellow("\n--dry-run: nothing written"))
+        return 0
+
+    for e, _ in todo:
+        e.repo_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(e.live_path, e.repo_path)
+    for p in inst_todo:
+        name = p.name if p.name.endswith(".lua") else p.name + ".lua"
+        shutil.copy2(p, AUT / name)
+
+    print(green(f"\nImported {len(todo) + len(inst_todo)} file(s) into the repo."))
+    print("Review and commit:")
+    print(f"  cd {REPO}")
+    print("  git status")
+    print("  git diff")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

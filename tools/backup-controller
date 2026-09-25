@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""Snapshot the live Actually Useful Turtles controller (computer 9).
+
+  ./tools/backup-controller              full snapshot, including runtime state
+  ./tools/backup-controller --code-only  source directories only, no state
+  ./tools/backup-controller --list       show existing snapshots
+  ./tools/backup-controller --note "x"   label the snapshot
+
+Snapshots are plain directory copies under
+/home/cesar/Backups/ActuallyUsefulTurtles/full/ so you can read, grep and diff
+them with ordinary tools. Nothing here writes to the controller.
+"""
+
+import argparse
+import shutil
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from aut_common import (  # noqa: E402
+    FULL_BACKUPS, LIVE, CONTROLLER_DIRS, TURTLE_DIRS,
+    bold, blue, green, yellow, timestamp, verify_live_root,
+)
+
+
+def human(n: float) -> str:
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if n < 1024 or unit == "GiB":
+            return f"{int(n)}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024.0
+    return f"{n:.1f}GiB"
+
+
+def dir_stats(path: Path):
+    files = [p for p in path.rglob("*") if p.is_file()]
+    return len(files), sum(p.stat().st_size for p in files)
+
+
+def list_backups():
+    if not FULL_BACKUPS.is_dir():
+        print("no snapshots yet")
+        return
+    snaps = sorted([p for p in FULL_BACKUPS.iterdir() if p.is_dir()], reverse=True)
+    if not snaps:
+        print("no snapshots yet")
+        return
+    print(bold(f"Full snapshots in {FULL_BACKUPS}"))
+    for s in snaps:
+        n, size = dir_stats(s)
+        note = ""
+        meta = s / "BACKUP-INFO.txt"
+        if meta.is_file():
+            for line in meta.read_text().splitlines():
+                if line.startswith("note:"):
+                    note = line[5:].strip()
+        kind = "code-only" if (s / ".code-only").exists() else "full"
+        print(f"  {s.name}  {n:>4} files  {human(size):>9}  [{kind}]"
+              + (f"  {blue(note)}" if note else ""))
+
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--code-only", action="store_true",
+                    help="copy only general/ gui/ host/ storage/ turtle/")
+    ap.add_argument("--list", action="store_true", help="list existing snapshots")
+    ap.add_argument("--note", default="", help="label stored with the snapshot")
+    args = ap.parse_args()
+
+    if args.list:
+        list_backups()
+        return 0
+
+    verify_live_root()
+
+    dest = FULL_BACKUPS / timestamp()
+    if dest.exists():
+        print(f"snapshot {dest} already exists", file=sys.stderr)
+        return 1
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    print(bold("Backing up live controller"))
+    print(f"  from : {LIVE}")
+    print(f"  to   : {dest}")
+
+    if args.code_only:
+        dest.mkdir(parents=True)
+        (dest / ".code-only").write_text("source directories only\n")
+        for d in sorted(CONTROLLER_DIRS | TURTLE_DIRS):
+            src = LIVE / d
+            if src.is_dir():
+                shutil.copytree(src, dest / d)
+                print(f"  + {d}/")
+    else:
+        # copy2 preserves mtimes, which the controller's boot-time copier uses
+        shutil.copytree(LIVE, dest, symlinks=True, copy_function=shutil.copy2)
+
+    n, size = dir_stats(dest)
+    info = [
+        f"source: {LIVE}",
+        f"created: {timestamp()}",
+        f"kind: {'code-only' if args.code_only else 'full'}",
+        f"files: {n}",
+        f"bytes: {size}",
+        f"note: {args.note}",
+    ]
+    (dest / "BACKUP-INFO.txt").write_text("\n".join(info) + "\n")
+
+    print(green(f"\nDone. {n} files, {human(size)}."))
+    if not args.code_only:
+        state = LIVE / "runtime" / "tunnelMap.txt"
+        if state.is_file():
+            print(f"  tunnel graph captured: runtime/tunnelMap.txt "
+                  f"({human(state.stat().st_size)})")
+        mapdir = LIVE / "runtime" / "map"
+        if mapdir.is_dir():
+            mn, ms = dir_stats(mapdir)
+            print(f"  learned map captured : runtime/map/ ({mn} files, {human(ms)})")
+    else:
+        print(yellow("  code-only: runtime state was NOT captured"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

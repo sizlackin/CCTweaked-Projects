@@ -1,0 +1,48 @@
+# ---------------------------------------------------------------------------
+# Never commit the Minecraft world, the live ComputerCraft filesystem, or
+# backups. The live controller is a separate running installation; this repo is
+# only the source for it.
+# ---------------------------------------------------------------------------
+
+# Local convenience symlink to the live controller (computer/9)
+ActuallyUsefulTurtles-LIVE
+*-LIVE
+
+# Anything that looks like a live CC filesystem or world
+computercraft/
+saves/
+**/computercraft/computer/
+*.dat
+*.dat_old
+level.dat*
+session.lock
+
+# Backups and snapshots
+Backups/
+backups/
+*.bak
+*.orig
+*.rej
+*~
+
+# Persistent controller runtime state, in case it is ever copied in here
+runtime/map/
+tunnelMap.txt
+stations.txt
+taskData.txt
+turtles.txt
+alerts.txt
+
+# Logs and runtime dumps
+*.log
+log.txt
+*.dump
+nohup.out
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
