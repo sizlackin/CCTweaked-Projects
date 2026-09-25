@@ -47,6 +47,77 @@ function Mapper:_trafficKey(pos,dir)
 	return tostring(pos.x)..","..tostring(pos.y)..","..tostring(pos.z).."|"..tostring(dir)
 end
 
+function Mapper:discoverPotentialBranches(avoidDir)
+	-- LABENHANCED_BRANCH_RESCUE
+	-- Fast travel normally trusts already-mapped roads and does not rescan them.
+	-- When traffic stalls us, do one cheap local horizontal survey so an old
+	-- road node can reveal a side tunnel which was never entered/mapped before.
+	-- The occupied direction is deliberately skipped.
+	local m = self.miner
+	local nav = self.navigator
+	local pos = vector.new(m.pos.x,m.pos.y,m.pos.z)
+	local originalOrientation = m.orientation
+	local existingNode = nav:requestNode(pos)
+	local known = existingNode and existingNode.connections or {}
+	local discovered = 0
+
+	for _,entry in ipairs(horizontal) do
+		if entry.name ~= avoidDir then
+			local conn = known and known[entry.name]
+			local state = conn and conn.state
+			m:turnTo(entry.orient)
+
+			local hasBlock,data = turtle.inspect()
+			local target = TunnelMap.target(pos,entry.name)
+
+			if not hasBlock then
+				m:setMapValue(target.x,target.y,target.z,0)
+				if state ~= TunnelMap.STATE.OPEN then
+					self:_queue(pos,entry.name,TunnelMap.STATE.UNMAPPED,{
+						blockedReason="branch_rescue",
+					})
+					discovered = discovered + 1
+				end
+			else
+				local name = data and data.name or "unknown:block"
+				m:setMapValue(target.x,target.y,target.z,name)
+
+				if isTunnelDecoration(name) then
+					if not (state == TunnelMap.STATE.BLOCKED
+					and conn and conn.blockedReason == "decoration_no_bypass") then
+						self:_queue(pos,entry.name,TunnelMap.STATE.UNMAPPED,{
+							blockedReason="branch_rescue",
+						})
+						discovered = discovered + 1
+					end
+				elseif name == "computercraft:turtle_advanced"
+				or name == "computercraft:turtle_normal"
+				or name == "computercraft:turtle" then
+					-- Another turtle in a side branch is traffic, never a wall.
+					self:_queue(pos,entry.name,TunnelMap.STATE.TEMPORARILY_BLOCKED,{
+						blockedUntil=os.epoch("utc")+2500,
+						resume=TunnelMap.STATE.OPEN,
+						blockedReason="turtle_traffic",
+					})
+				elseif state ~= TunnelMap.STATE.BLOCKED then
+					self:_queue(pos,entry.name,TunnelMap.STATE.BLOCKED)
+				end
+			end
+			sleep(0)
+		end
+	end
+
+	m:turnTo(originalOrientation)
+	m:flushTunnelUpdatesSync()
+
+	if discovered > 0 then
+		print("BRANCH RESCUE FOUND",discovered,"POSSIBLE SIDE PATH(S)")
+	else
+		print("BRANCH RESCUE: NO NEW LOCAL SIDE PATH")
+	end
+	return discovered
+end
+
 function Mapper:handleTraffic(frontier,target,dir,trafficHits)
 	-- LABENHANCED_SMART_TRAFFIC
 	-- First collision: give the turtle ahead a brief chance to clear the lane.
@@ -75,6 +146,11 @@ function Mapper:handleTraffic(frontier,target,dir,trafficHits)
 		return false,reason,name
 	end
 
+	-- Before rerouting, actively look for a side tunnel at this old road node.
+	-- This recovers branches missed by earlier mapper versions / fast-travel
+	-- history without going back to expensive full-corridor rescanning.
+	self:discoverPotentialBranches(dir)
+
 	-- Escalate the shared avoidance window for repeated congestion on the same
 	-- edge. This makes a mapper prefer a side branch / loop when one exists,
 	-- while still allowing this road to reopen automatically later.
@@ -85,7 +161,7 @@ function Mapper:handleTraffic(frontier,target,dir,trafficHits)
 		self.trafficWaitUntil or 0,
 		os.epoch("utc") + cooldown
 	)
-	print("TRAFFIC STALLED - TRYING NEXT BEST BRANCH")
+	print("TRAFFIC STALLED - SOLVING NEXT BEST UNEXPLORED BRANCH")
 	return false,"traffic_reroute",name
 end
 
