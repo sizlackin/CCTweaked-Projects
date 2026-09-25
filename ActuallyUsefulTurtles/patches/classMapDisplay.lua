@@ -943,6 +943,7 @@ function MapDisplay:redraw() -- super override
 		-- print("map", "redraw ct", ct, "time", os.epoch("utc") - start)
 		
 		self:redrawOverlay()
+		self:redrawSelectionAnchors()
 		if not self.hiddenControls then self:drawChrome() end
 		-- redraw map elements
 		local node = self.objects.last
@@ -1033,27 +1034,16 @@ function MapDisplay:drawAreas()
 			end
 		end
 
-		-- Normal area outlines are subpixel-thin. Selection anchors are different:
-		-- PixelDrawer can encode only two colors inside each 2x3 terminal cell, so a
-		-- one-subpixel green/magenta anchor can be quantized away when terrain and
-		-- the red outline occupy the same cell. Fill the terminal cell containing
-		-- each anchor instead. This keeps the marker visible in every quadrant and
-		-- at every zoom level without changing its world coordinate.
+		-- Draw normal area outlines in the subpixel map. Selection anchors are
+		-- intentionally skipped here and rendered later as character overlays.
+		-- That avoids PixelDrawer's two-colors-per-2x3-cell quantization while
+		-- keeping the red outline at the exact selected world coordinate.
 		for _,area in ipairs(areas) do
 			local start, finish, color = area.start, area.finish, area.color
 			if start and finish and not area.selectionAnchor then
 				local sx, sz = self:transformSubPos(start)
 				local ex, ez = self:transformSubPos(finish)
 				self.drawer:drawBox(sx, sz, ex-sx+1, ez-sz+1, blitTab[color], 1)
-			end
-		end
-		for _,area in ipairs(areas) do
-			if area.selectionAnchor and area.start and area.color then
-				local sx, sz = self:transformSubPos(area.start)
-				-- Align to PixelDrawer's 2x3 subpixel character cell.
-				local cellX = math.floor((sx - 1) / 2) * 2 + 1
-				local cellZ = math.floor((sz - 1) / 3) * 3 + 1
-				self.drawer:drawBox(cellX, cellZ, 2, 3, blitTab[area.color], 1)
 			end
 		end
 	end
@@ -1105,6 +1095,25 @@ function MapDisplay:drawChunkCircle()
 		self.drawer:drawCircle(centerX, centerZ, radius, colors.toBlit(colors.orange))
 		local radius = 16*16 / self.zoomLevel
 		self.drawer:drawCircle(centerX, centerZ, radius, colors.toBlit(colors.red))
+	end
+end
+
+function MapDisplay:redrawSelectionAnchors()
+	-- Render WorldEdit pos1/pos2 after the subpixel frame has been blitted.
+	-- A terminal glyph can carry its own foreground color, so the marker cannot
+	-- disappear when terrain/red-outline colors share the same 2x3 pixel cell.
+	-- The red outline underneath remains the precise block-level reference.
+	if not self.areas then return end
+	for _,area in ipairs(self.areas) do
+		if area.selectionAnchor and area.start and area.color
+		and self:isWithin(area.start.x, nil, area.start.z) then
+			local x,y = self:transformPos(area.start)
+			if x >= 1 and x <= self.width and y >= 1 and y <= self.height then
+				self:setCursorPos(x,y)
+				-- CP437 254 is the small filled square used by CC terminals.
+				self:blit("\254", blitTab[area.color], blitTab[self.backgroundColor])
+			end
+		end
 	end
 end
 
