@@ -36,6 +36,9 @@ function TaskGroupSelector:new(x,y, taskManager, slowStart)
 	o.mapDisplay = nil
 	o.positions = {}
 	o.selectionPreview = nil
+	o.selectionPos1Preview = nil
+	o.selectionPos2Preview = nil
+	o.selectionMode = false
 	o.btnConfirmArea = nil
 	o.btnReselectArea = nil
 	o.taskGroup = nil
@@ -254,21 +257,29 @@ function TaskGroupSelector:selectPosition()
 	self:openMap()
 end
 
-function TaskGroupSelector:clearAreaPreview()
+function TaskGroupSelector:clearSelectionOverlay()
 	local mapDisplay = self.mapDisplay
-
 	if mapDisplay and mapDisplay.areas then
 		for i = #mapDisplay.areas, 1, -1 do
 			local area = mapDisplay.areas[i]
-			if area == self.selectionPreview or area.areaPreviewOwner == self then
+			if area == self.selectionPreview
+			or area == self.selectionPos1Preview
+			or area == self.selectionPos2Preview
+			or area.areaPreviewOwner == self then
 				table.remove(mapDisplay.areas, i)
 			end
 		end
 	end
-	self.selectionPreview = nil
 
-	-- Remove every preview control owned by this selector. Scanning the map's
-	-- object list also cleans up safely if a previous preview was interrupted.
+	self.selectionPreview = nil
+	self.selectionPos1Preview = nil
+	self.selectionPos2Preview = nil
+
+	if mapDisplay then mapDisplay.fullRedraw = true end
+end
+
+function TaskGroupSelector:clearAreaControls()
+	local mapDisplay = self.mapDisplay
 	if mapDisplay and mapDisplay.objects then
 		local object = mapDisplay.objects.first
 		while object do
@@ -281,91 +292,169 @@ function TaskGroupSelector:clearAreaPreview()
 			object = nextObject
 		end
 	end
+
 	self.btnConfirmArea = nil
 	self.btnReselectArea = nil
-
-	-- Area outlines are drawn into the map's cached pixel frame. Force the next
-	-- redraw to rebuild that frame so a removed green outline cannot linger.
-	if mapDisplay then
-		mapDisplay.fullRedraw = true
-	end
 end
 
-function TaskGroupSelector:showAreaPreview()
-	if not self.mapDisplay or #self.positions ~= 2 then return end
+function TaskGroupSelector:clearAreaPreview()
+	-- LABENHANCED_WORLDEDIT_AREA_SELECT
+	self.selectionMode = false
+	if self.mapDisplay then
+		self.mapDisplay.doSelectPosition = false
+	end
+	self:clearSelectionOverlay()
+	self:clearAreaControls()
+	if self.mapDisplay then self.mapDisplay.fullRedraw = true end
+end
 
-	self:clearAreaPreview()
+function TaskGroupSelector:layoutAreaControls()
+	if not self.mapDisplay then return nil end
 
-	local a, b = self.positions[1], self.positions[2]
-	local previewStart = vector.new(
-		math.min(a.x, b.x),
-		math.min(a.y, b.y),
-		math.min(a.z, b.z)
-	)
-	local previewFinish = vector.new(
-		math.max(a.x, b.x),
-		math.max(a.y, b.y),
-		math.max(a.z, b.z)
-	)
-
-	self.selectionPreview = {
-		start = previewStart,
-		finish = previewFinish,
-		color = colors.green,
-		areaPreviewOwner = self,
-	}
-	table.insert(self.mapDisplay.areas, self.selectionPreview)
-
-	-- Keep the map open so the selected rectangle can be reviewed. Centre both
-	-- actions in the top bar between the up arrow and the close button.
-	local reselectWidth = 10
+	local deselectWidth = 10
 	local confirmWidth = 10
 	local buttonGap = 1
-	local controlsWidth = reselectWidth + buttonGap + confirmWidth
+	local controlsWidth = deselectWidth + buttonGap + confirmWidth
 	local controlsLeft = self.mapDisplay.btnUp.x + self.mapDisplay.btnUp.width
 	local controlsRight = self.mapDisplay.btnClose.x - 1
 	local availableWidth = controlsRight - controlsLeft + 1
-	local reselectX = controlsLeft + math.floor((availableWidth - controlsWidth) / 2)
-	local confirmX = reselectX + reselectWidth + buttonGap
-	local controlsY = 2
+	local deselectX = controlsLeft + math.floor((availableWidth - controlsWidth) / 2)
+	local confirmX = deselectX + deselectWidth + buttonGap
 
-	self.btnReselectArea = Button:new(
-		"RESELECT",
-		reselectX,
-		controlsY,
-		reselectWidth,
-		1,
-		colors.orange
-	)
-	self.btnReselectArea.areaPreviewOwner = self
-	self.btnReselectArea.click = function()
-		self:reselectArea()
-		return true
+	return deselectX, confirmX, 2
+end
+
+function TaskGroupSelector:showAreaControls()
+	if not self.mapDisplay then return end
+
+	-- Keep one set of controls alive for the whole WorldEdit-like selection
+	-- session. DESELECT exits edit mode without discarding the chosen positions.
+	if not self.btnReselectArea then
+		local deselectX, confirmX, controlsY = self:layoutAreaControls()
+		if not deselectX then return end
+
+		self.btnReselectArea = Button:new(
+			"DESELECT",
+			deselectX,
+			controlsY,
+			10,
+			1,
+			colors.red
+		)
+		self.btnReselectArea.areaPreviewOwner = self
+		self.btnReselectArea.click = function()
+			self:deselectArea()
+			return true
+		end
+
+		self.btnConfirmArea = Button:new(
+			"CONFIRM",
+			confirmX,
+			controlsY,
+			10,
+			1,
+			colors.green
+		)
+		self.btnConfirmArea.areaPreviewOwner = self
+		self.btnConfirmArea.click = function()
+			self:confirmAreaSelection()
+			return true
+		end
+
+		self.mapDisplay:addObject(self.btnReselectArea)
+		self.mapDisplay:addObject(self.btnConfirmArea)
 	end
 
-	self.btnConfirmArea = Button:new(
-		"CONFIRM",
-		confirmX,
-		controlsY,
-		confirmWidth,
-		1,
-		colors.green
-	)
-	self.btnConfirmArea.areaPreviewOwner = self
-	self.btnConfirmArea.click = function()
-		self:confirmAreaSelection()
-		return true
+	if self.btnReselectArea then
+		self.btnReselectArea:setEnabled(self.selectionMode)
+	end
+	if self.btnConfirmArea then
+		self.btnConfirmArea:setEnabled(#self.positions == 2)
+	end
+end
+
+function TaskGroupSelector:updateAreaPreview()
+	if not self.mapDisplay then return end
+
+	-- Remove only the graphical overlay. Controls stay put while pos2 is moved.
+	self:clearSelectionOverlay()
+
+	local p1 = self.positions[1]
+	local p2 = self.positions[2]
+
+	-- Once both positions exist, draw the selected region in RED.
+	if p1 and p2 then
+		local previewStart = vector.new(
+			math.min(p1.x, p2.x),
+			math.min(p1.y, p2.y),
+			math.min(p1.z, p2.z)
+		)
+		local previewFinish = vector.new(
+			math.max(p1.x, p2.x),
+			math.max(p1.y, p2.y),
+			math.max(p1.z, p2.z)
+		)
+
+		self.selectionPreview = {
+			start = previewStart,
+			finish = previewFinish,
+			color = colors.red,
+			areaPreviewOwner = self,
+		}
+		table.insert(self.mapDisplay.areas, self.selectionPreview)
 	end
 
-	self.mapDisplay:addObject(self.btnReselectArea)
-	self.mapDisplay:addObject(self.btnConfirmArea)
+	-- WorldEdit-style anchors: pos1 GREEN, pos2 MAGENTA.
+	-- Insert these after the red outline so the anchor pixels remain visible.
+	if p1 then
+		self.selectionPos1Preview = {
+			start = vector.new(p1.x,p1.y,p1.z),
+			finish = vector.new(p1.x,p1.y,p1.z),
+			color = colors.green,
+			areaPreviewOwner = self,
+		}
+		table.insert(self.mapDisplay.areas, self.selectionPos1Preview)
+	end
+
+	if p2 then
+		self.selectionPos2Preview = {
+			start = vector.new(p2.x,p2.y,p2.z),
+			finish = vector.new(p2.x,p2.y,p2.z),
+			color = colors.magenta,
+			areaPreviewOwner = self,
+		}
+		table.insert(self.mapDisplay.areas, self.selectionPos2Preview)
+	end
+
+	self:showAreaControls()
+	self.mapDisplay.fullRedraw = true
 	self.mapDisplay:redraw()
 end
 
+-- Compatibility name for any older call sites.
+function TaskGroupSelector:showAreaPreview()
+	self:updateAreaPreview()
+end
+
+function TaskGroupSelector:deselectArea()
+	-- Exit edit mode but KEEP pos1/pos2 and the visualization. This lets normal
+	-- map clicks pan/recenter again without accidentally moving pos2.
+	self.selectionMode = false
+	if self.mapDisplay then
+		self.mapDisplay.doSelectPosition = false
+	end
+	self:showAreaControls()
+	if self.mapDisplay then self.mapDisplay:redraw() end
+end
+
 function TaskGroupSelector:reselectArea()
+	-- Legacy entry point: starting a fresh selection now means clearing both
+	-- anchors and re-entering the persistent right-click selection mode.
 	self:clearAreaPreview()
 	self.positions = {}
+	self.selectionMode = true
 	self:refresh()
+	self:showAreaControls()
 	self.mapDisplay.onPositionSelected = function(objRef,x,y,z) self:onAreaSelected(x,y,z) end
 	self.mapDisplay:selectPosition()
 	self.mapDisplay:redraw()
@@ -373,6 +462,8 @@ end
 
 function TaskGroupSelector:confirmAreaSelection()
 	if #self.positions ~= 2 then return end
+	self.selectionMode = false
+	if self.mapDisplay then self.mapDisplay.doSelectPosition = false end
 	self:clearAreaPreview()
 	self:closeMap()
 	self:refresh()
@@ -382,40 +473,48 @@ end
 function TaskGroupSelector:selectArea()
 	self:clearAreaPreview()
 	self.positions = {}
+	self.selectionMode = true
 	self.mapDisplay.onPositionSelected = function(objRef,x,y,z) self:onAreaSelected(x,y,z) end
 	self.mapDisplay:selectPosition()
 	self:openMap()
+	self:showAreaControls()
+	self.mapDisplay:redraw()
 end
 
 function TaskGroupSelector:onAreaSelected(x, y, z)
+	if not self.selectionMode then return end
 	print("selected position", #self.positions, x,y,z)
-	if x and z then
-		if #self.positions < 2 then
-			if y == nil then
-				if #self.positions == 0 then
-					-- default top level
-					y = default.yLevel.top					
-				else
-					-- default end level
-					y = default.yLevel.bottom
-				end
-			end
-			table.insert(self.positions,vector.new(x,y,z))
 
-			if #self.positions == 1 then
-				-- start selection for second position
-				self.mapDisplay.onPositionSelected = function(objRef,x,y,z) self:onAreaSelected(x,y,z) end
-				self.mapDisplay:selectPosition()
+	if x and z then
+		if y == nil then
+			if #self.positions == 0 then
+				y = default.yLevel.top
+			else
+				y = default.yLevel.bottom
 			end
 		end
-	else
-		-- cancel position selection
-	end
-	
-	if #self.positions == 2 then
-		-- Area selected: keep the map open, draw a green preview, and
-		-- require explicit confirmation before returning to group setup.
-		self:showAreaPreview()
+
+		if #self.positions == 0 then
+			-- First right-click: lock pos1 (GREEN).
+			self.positions[1] = vector.new(x,y,z)
+		elseif #self.positions == 1 then
+			-- Second right-click: create pos2 (MAGENTA).
+			self.positions[2] = vector.new(x,y,z)
+		else
+			-- Every later right-click moves ONLY pos2, WorldEdit-style.
+			self.positions[2] = vector.new(x,y,z)
+		end
+
+		self:refresh()
+		self:updateAreaPreview()
+
+		-- Persistent edit mode: immediately arm the map for the next right-click.
+		if self.selectionMode then
+			self.mapDisplay.onPositionSelected = function(objRef,sx,sy,sz)
+				self:onAreaSelected(sx,sy,sz)
+			end
+			self.mapDisplay:selectPosition()
+		end
 	end
 end
 
