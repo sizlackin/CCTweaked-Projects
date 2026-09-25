@@ -359,9 +359,37 @@ end
 function TaskGroup:cancel()
 	print("cancelling", #self.tasks, "tasks for group", self.shortId)
 	for _,task in ipairs(self.tasks) do
-		local ok = task:cancel()
+		local turtle = self.turtles and self.turtles[task.turtleId]
+		local state = turtle and turtle.state
+
+		-- LABENHANCED_STALE_CHECKPOINT_RECOVERY
+		-- If the turtle says it has no live task stack but the controller still
+		-- thinks this assignment is running, a normal synchronous cancel can
+		-- time out forever against a ghost checkpoint restore. Clear that stale
+		-- assignment directly and make the UI truthful immediately.
+		if state and state.online and state.task == nil
+		and task.status ~= "completed" and task.status ~= "deleted"
+		and task.status ~= "cancelled" then
+			print("clearing stale idle task",task.shortId,"turtle",task.turtleId)
+			if self.taskManager and self.taskManager.node then
+				self.taskManager.node:send(
+					task.turtleId,
+					{"FORCE_CLEAR_STALE_TASK",task.id},
+					false,false
+				)
+			end
+			task:setStatus("cancelled")
+		else
+			local ok = task:cancel()
+			if not ok then
+				print("WARNING: cancel failed",task.shortId,"turtle",task.turtleId)
+			end
+		end
 	end
 	self:setStatus("cancelled")
+	if self.taskManager and self.taskManager.save then
+		self.taskManager:save()
+	end
 end
 
 function TaskGroup:delete()
