@@ -287,11 +287,9 @@ function MapDisplay:layoutControls()
 		cb.width = 2 + #cb.labelText
 		longest = math.max(longest, cb.width)
 	end
-	-- Pad the toggles off the panel's side walls when there's room.
-	local inset = (longest + 4 <= midW - 2) and 3 or 2
-	local panelWidth = longest + 2 * (inset - 1)
+	local panelWidth = longest + 2
 	local panelTop = h - #layers - 1
-	for i, cb in ipairs(layers) do cb:setPos(inset, panelTop + i) end
+	for i, cb in ipairs(layers) do cb:setPos(2, panelTop + i) end
 	local titleRow = panelTop - 1
 	local showTitle = titleRow >= midH + 4
 
@@ -335,16 +333,6 @@ function MapDisplay:drawChrome()
 	local plate, panel = default.plateColor, default.panelColor
 	local caption = default.captionColor
 
-	-- Hairline border around the whole screen (edge cells only; the map shows inside).
-	local W, H = self.width, self.height
-	self:drawText(1, 1, "\151" .. string.rep("\131", W - 2), plate, panel)
-	self:drawText(W, 1, "\148", panel, plate)
-	for row = 2, H - 1 do
-		self:drawText(1, row, "\149", plate, panel)
-		self:drawText(W, row, "\149", panel, plate)
-	end
-	self:drawText(1, H, "\138" .. string.rep("\143", W - 2) .. "\133", panel, plate)
-
 	local level = chrome.level
 	self:drawFilledBox(level.x, level.y, level.w, level.h, plate)
 	self:drawText(level.x, level.y, padCenter(level.caption, level.w), caption, plate)
@@ -357,13 +345,18 @@ function MapDisplay:drawChrome()
 	local zoom = chrome.zoom
 	self:drawFilledBox(zoom.x, zoom.y, zoom.w, zoom.h, plate)
 
-	-- cc-mek-scada "even" plate: full-cell gray sides, 2/3-cell top and bottom.
+	-- cc-mek-scada thin frame: a 1-subpixel ring drawn with teletext glyphs.
 	local p = chrome.layers
 	local inner = p.w - 2
-	self:drawFilledBox(p.x, p.y, p.w, p.h, plate)
-	self:drawFilledBox(p.x + 1, p.y + 1, inner, p.h - 2, panel)
-	self:drawText(p.x + 1, p.y, string.rep("\143", inner), plate, panel)
-	self:drawText(p.x + 1, p.y + p.h - 1, string.rep("\131", inner), panel, plate)
+	self:drawFilledBox(p.x, p.y, p.w, p.h, panel)
+	self:drawText(p.x, p.y, "\151", plate, panel)
+	self:drawText(p.x + 1, p.y, string.rep("\131", inner), plate, panel)
+	self:drawText(p.x + p.w - 1, p.y, "\148", panel, plate)
+	for row = p.y + 1, p.y + p.h - 2 do
+		self:drawText(p.x, row, "\149", plate, panel)
+		self:drawText(p.x + p.w - 1, row, "\149", panel, plate)
+	end
+	self:drawText(p.x, p.y + p.h - 1, "\138" .. string.rep("\143", inner) .. "\133", panel, plate)
 	if p.titleRow then
 		self:drawText(p.x, p.titleRow, padCenter("LAYERS", p.w), default.valueColor, plate)
 	end
