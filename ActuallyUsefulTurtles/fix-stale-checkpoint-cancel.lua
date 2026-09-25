@@ -11,7 +11,7 @@ local files = {
   },
   {
     url="https://raw.githubusercontent.com/sizlackin/CCTweaked-Projects/main/ActuallyUsefulTurtles/patches/classTaskGroup.lua",
-    marker="LABENHANCED_STALE_CHECKPOINT_RECOVERY",
+    marker="LABENHANCED_HARD_STALE_RESET",
     targets={"host/classTaskGroup.lua","runtime/classTaskGroup.lua"},
   },
   {
