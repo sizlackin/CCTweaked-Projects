@@ -421,6 +421,7 @@ function TaskGroupSelector:startTasks()
 end
 
 function TaskGroupSelector:close()
+	self:closeTaskMenu()
 	self:clearAreaPreview()
 	self:discardDraftGroup()
 	if self.closeOwner and self.closeOwner.addObjectInternal then
@@ -848,25 +849,61 @@ function TaskGroupSelector:onPositionSelected(x,y,z)
 	self:closeMap()
 end
 	
-function TaskGroupSelector:selectTask()
-	local choices = {"mineArea", "excavateArea"}
-	
+function TaskGroupSelector:setTaskMenuOpen(open)
 	-- LABENHANCED_NEWGROUP_HMI
+	-- Caret points the way the menu will go: down to open, up to close.
+	if self.btnTaskCaret then
+		self.btnTaskCaret:setText(open and "\30" or "\31")
+	end
+end
+
+function TaskGroupSelector:closeTaskMenu()
+	local menu = self.choiceSelector
+	self.choiceSelector = nil
+	self:setTaskMenuOpen(false)
+	if menu and menu.close then menu:close() end
+end
+
+function TaskGroupSelector:selectTask()
+	-- LABENHANCED_NEWGROUP_HMI
+	-- Toggle, not open. This used to build a new ChoiceSelector on every click,
+	-- so repeated presses stacked menus on top of each other with no way back.
+	if self.choiceSelector then
+		self:closeTaskMenu()
+		if self.parent then self.parent:redraw() end
+		return true
+	end
+
+	local choices = {"mineArea", "excavateArea"}
+
 	-- The menu is added to self.parent, so it must be positioned in PARENT
 	-- coordinates. Using the field's local x/y only worked while this panel sat
 	-- at 1,1; once it was centred the menu landed off the panel entirely.
 	-- Hung directly under the field so it reads as that field's dropdown.
-	self.choiceSelector = ChoiceSelector:new(
+	local menu = ChoiceSelector:new(
 		self.x + self.btnSelectTask.x - 1,
 		self.y + self.btnSelectTask.y,
-		16, 6, choices)
-	self.choiceSelector.onChoiceSelected = function(choice) 
+		-- as wide as the field it drops from; ChoiceSelector grows this if a
+		-- choice needs more room, so it is a floor rather than a fixed size
+		self.taskFieldW, 6, choices)
+
+	-- A dropdown is dismissed by its own control, not by a second red X sitting
+	-- under the one that closes the dialog.
+	menu:removeCloseButton()
+
+	menu.onChoiceSelected = function(choice)
 		self.taskName = choice
 		self.lblTask:setText(self.taskName)
+		-- ChoiceSelector:selectChoice already closed itself before calling this
+		self.choiceSelector = nil
+		self:setTaskMenuOpen(false)
 		self:refresh()
 		self:redraw()
 	end
-	self.parent:addObject(self.choiceSelector)
+
+	self.choiceSelector = menu
+	self:setTaskMenuOpen(true)
+	self.parent:addObject(menu)
 	self.parent:redraw()
 	return true -- noBlink
 end

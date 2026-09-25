@@ -109,6 +109,24 @@ function screens.newgroup(global, say)
 	if stage == "empty" then sel.taskName = nil end
 
 	sel:refresh()
+
+	-- stage "menu": open the task dropdown so its state can be checked
+	if stage == "menu" then
+		sel:selectTask()
+		say("menu open: caret=%q stacked=%s",
+			sel.btnTaskCaret:getText(), tostring(sel.choiceSelector ~= nil))
+		-- clicking again must close it, not stack a second one
+		sel:selectTask()
+		say("after 2nd click: caret=%q open=%s",
+			sel.btnTaskCaret:getText(), tostring(sel.choiceSelector ~= nil))
+		sel:selectTask()
+		say("after 3rd click: caret=%q open=%s",
+			sel.btnTaskCaret:getText(), tostring(sel.choiceSelector ~= nil))
+		say("menu has close button: %s",
+			tostring(sel.choiceSelector and sel.choiceSelector.btnClose
+				and sel.choiceSelector.btnClose.visible))
+	end
+
 	local function span(b) return b and (b.x .. "-" .. (b.x + b.width - 1)) or "?" end
 	say("cols | selectArea %s | top %s | bottom %s | split %s",
 		span(sel.btnSelectArea), span(sel.btnFromTop),
