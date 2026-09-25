@@ -539,11 +539,15 @@ function TaskGroup:assignAreas(areas)
 		-- give every stripe a collinear corner entry on that same shared spine.
 		local lowCandidate, highCandidate
 		if stripesAlongX then
-			lowCandidate = vector.new(math.min(areas[1].start.x,areas[1].finish.x),minY,edgeZ)
-			highCandidate = vector.new(math.max(areas[#areas].start.x,areas[#areas].finish.x),minY,edgeZ)
+			local lo = areas[1].stripLaneLow or math.min(areas[1].start.x,areas[1].finish.x)
+			local hi = areas[#areas].stripLaneHigh or math.max(areas[#areas].start.x,areas[#areas].finish.x)
+			lowCandidate = vector.new(lo,minY,edgeZ)
+			highCandidate = vector.new(hi,minY,edgeZ)
 		else
-			lowCandidate = vector.new(edgeX,minY,math.min(areas[1].start.z,areas[1].finish.z))
-			highCandidate = vector.new(edgeX,minY,math.max(areas[#areas].start.z,areas[#areas].finish.z))
+			local lo = areas[1].stripLaneLow or math.min(areas[1].start.z,areas[1].finish.z)
+			local hi = areas[#areas].stripLaneHigh or math.max(areas[#areas].start.z,areas[#areas].finish.z)
+			lowCandidate = vector.new(edgeX,minY,lo)
+			highCandidate = vector.new(edgeX,minY,hi)
 		end
 
 		local reverse = false
@@ -562,13 +566,13 @@ function TaskGroup:assignAreas(areas)
 		for i,area in ipairs(areas) do
 			if stripesAlongX then
 				local x = reverse
-					and math.max(area.start.x,area.finish.x)
-					or math.min(area.start.x,area.finish.x)
+					and (area.stripLaneHigh or math.max(area.start.x,area.finish.x))
+					or (area.stripLaneLow or math.min(area.start.x,area.finish.x))
 				entries[i] = vector.new(x,minY,edgeZ)
 			else
 				local z = reverse
-					and math.max(area.start.z,area.finish.z)
-					or math.min(area.start.z,area.finish.z)
+					and (area.stripLaneHigh or math.max(area.start.z,area.finish.z))
+					or (area.stripLaneLow or math.min(area.start.z,area.finish.z))
 				entries[i] = vector.new(edgeX,minY,z)
 			end
 		end
@@ -592,6 +596,25 @@ function TaskGroup:assignAreas(areas)
 			task:setVar("accessEntry", sharedAccess.entries[i])
 			task:setVar("accessLeader", i == 1)
 			task:setVar("sharedAccessGroup", self.id)
+
+			-- LABENHANCED_GLOBAL_STRIP_GRID
+			-- The area table may have been reversed as a whole, but its low/high
+			-- lane coordinates remain absolute.
+			if area.stripLaneLow and area.stripLaneHigh then
+				local entry = sharedAccess.entries[i]
+				local laneStart,laneFinish
+				if area.stripAxis == "x" then
+					laneStart = entry.x
+					laneFinish = (entry.x == area.stripLaneLow) and area.stripLaneHigh or area.stripLaneLow
+				else
+					laneStart = entry.z
+					laneFinish = (entry.z == area.stripLaneLow) and area.stripLaneHigh or area.stripLaneLow
+				end
+				task:setVar("stripAxis",area.stripAxis)
+				task:setVar("stripLaneStart",laneStart)
+				task:setVar("stripLaneFinish",laneFinish)
+				task:setVar("stripLaneCount",area.stripLaneCount)
+			end
 		end
 	end
 	return self.tasks
@@ -926,31 +949,62 @@ function TaskGroup:splitArea()
 		local n = self.groupSize
 		local areas = {}
 
-		if width <= depth and width >= n then
-			-- Z is the long direction: divide west/east across X.
-			local base = math.floor(width / n)
-			local extra = width % n
-			local cursor = minX
+		-- LABENHANCED_GLOBAL_STRIP_GRID
+		-- Plan strip lanes ONCE for the whole selection, then distribute those
+		-- lanes between turtles. Every lane is exactly 3 blocks center-to-center
+		-- (two solid blocks between tunnels), so turtle stripe boundaries can
+		-- never reset the pattern and create redundant 1-block gaps.
+		local shortMin,shortMax,shortAxis
+		if width <= depth then
+			shortMin,shortMax,shortAxis = minX,maxX,"x" -- long direction Z
+		else
+			shortMin,shortMax,shortAxis = minZ,maxZ,"z" -- long direction X
+		end
+
+		local shortSpan = shortMax-shortMin
+		local phaseOffset = (shortSpan % 3 == 2) and 1 or 0
+		local lanes = {}
+		for v=shortMin+phaseOffset,shortMax,3 do
+			lanes[#lanes+1] = v
+		end
+
+		if #lanes >= n then
+			local base = math.floor(#lanes/n)
+			local extra = #lanes % n
+			local laneCursor = 1
+
 			for i=1,n do
-				local size = base + (i <= extra and 1 or 0)
-				areas[i] = {
-					start = vector.new(cursor,minY,minZ),
-					finish = vector.new(cursor + size - 1,maxY,maxZ),
-				}
-				cursor = cursor + size
-			end
-		elseif depth < width and depth >= n then
-			-- X is the long direction: divide north/south across Z.
-			local base = math.floor(depth / n)
-			local extra = depth % n
-			local cursor = minZ
-			for i=1,n do
-				local size = base + (i <= extra and 1 or 0)
-				areas[i] = {
-					start = vector.new(minX,minY,cursor),
-					finish = vector.new(maxX,maxY,cursor + size - 1),
-				}
-				cursor = cursor + size
+				local laneCount = base + (i <= extra and 1 or 0)
+				local firstIndex = laneCursor
+				local lastIndex = laneCursor + laneCount - 1
+				local firstLane = lanes[firstIndex]
+				local lastLane = lanes[lastIndex]
+
+				-- Natural non-overlapping stripe boundary sits between globally
+				-- spaced rows. Each row can inspect one wall block on either side.
+				local stripeMin = (firstIndex == 1) and shortMin or (firstLane - 1)
+				local stripeMax = (lastIndex == #lanes) and shortMax or (lastLane + 1)
+
+				if shortAxis == "x" then
+					areas[i] = {
+						start = vector.new(stripeMin,minY,minZ),
+						finish = vector.new(stripeMax,maxY,maxZ),
+						stripLaneLow = firstLane,
+						stripLaneHigh = lastLane,
+						stripLaneCount = laneCount,
+						stripAxis = "x",
+					}
+				else
+					areas[i] = {
+						start = vector.new(minX,minY,stripeMin),
+						finish = vector.new(maxX,maxY,stripeMax),
+						stripLaneLow = firstLane,
+						stripLaneHigh = lastLane,
+						stripLaneCount = laneCount,
+						stripAxis = "z",
+					}
+				end
+				laneCursor = lastIndex + 1
 			end
 		end
 
