@@ -133,7 +133,33 @@ function Mapper:handleTraffic(frontier,target,dir,trafficHits)
 
 	print("TURTLE TRAFFIC AHEAD - BRIEF YIELD")
 	nav:renewFrontier(frontier)
-	sleep(0.75)
+
+	-- LABENHANCED_TRAFFIC_TIEBREAK
+	-- A fixed sleep here was symmetric: two mappers meeting head-on both waited
+	-- the same 0.75s, both retried, both failed, and BOTH escalated to a reroute
+	-- when only one needed to give way. Neither deadlocked, but both threw away a
+	-- claimed frontier and were free to meet again on the next branch.
+	--
+	-- Reuse the miner's staggered yield, the same one the navigator path uses: it
+	-- breaks the symmetry by computer id, returns immediately if the lane cleared
+	-- during the stagger, and otherwise steps into the 2-high headspace so the
+	-- other turtle can physically pass underneath.
+	local yielded = false
+	if m.yieldForTurtleTraffic then
+		local rejoined,why = m:yieldForTurtleTraffic(2)
+		-- Only treat the yield as usable when the turtle is back on the tunnel
+		-- floor. "cleared" and "no_headspace" never left it; a true return climbed
+		-- and came back down. Anything else means it is still in the upper cell,
+		-- where moveAdjacent would step from the wrong Y.
+		yielded = rejoined or why == "cleared" or why == "no_headspace"
+		if not yielded then
+			print("TRAFFIC YIELD DID NOT REJOIN THE FLOOR - REROUTING")
+			nav:releaseFrontier(frontier)
+			return false,"traffic_reroute",nil
+		end
+	else
+		sleep(0.75)
+	end
 
 	local ok,reason,name = nav:moveAdjacent(target)
 	if ok then

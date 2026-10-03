@@ -935,6 +935,54 @@ function Miner:select(slot)
 	return true
 end
 
+function Miner:emergencyRefuelInPlace()
+	-- LABENHANCED_STRANDED_REFUEL
+	-- Last resort for a turtle that cannot move. getFuel() works by navigating to
+	-- a refuel station and sucking from the chest there, so at zero fuel it can
+	-- never run - the turtle is stranded even when parked on its own dock a few
+	-- blocks from the station, which is exactly how DTX-004 was found.
+	--
+	-- Turning and sucking cost no fuel in CC, so an in-place rescue is free to
+	-- attempt and costs nothing when there is no inventory adjacent. Only called
+	-- on the paths that would otherwise raise NEED FUEL, STUCK.
+	local startOrientation = self.orientation
+
+	for _ = 1, 4 do
+		self:inspect(true)
+		local block = self:getMapValue(self.lookingAt.x, self.lookingAt.y, self.lookingAt.z)
+		if block and isInventoryBlock(block) then
+			print("STRANDED - PULLING FUEL FROM ADJACENT INVENTORY")
+			for slot = 1, default.inventorySize do
+				if turtle.getItemCount(slot) == 0 then
+					self:select(slot)
+					break
+				end
+			end
+			if turtle.suck(default.fuelAmount) then
+				for slot = 1, default.inventorySize do
+					local data = turtle.getItemDetail(slot)
+					if data and fuelItems[data.name] then
+						self:select(slot)
+						repeat
+							local ok = turtle.refuel(1)
+						until not ok
+							or turtle.getFuelLevel() >= default.goodFuelLevel
+					end
+				end
+			end
+			if turtle.getFuelLevel() > 0 then
+				self:turnTo(startOrientation)
+				print("RECOVERED - fuel level:", turtle.getFuelLevel())
+				return true
+			end
+		end
+		self:turnRight()
+	end
+
+	self:turnTo(startOrientation)
+	return false
+end
+
 function Miner:refuel(simple)
 	local currentTask = self:addCheckTask({debug.getinfo(1, "n").name})
 
@@ -958,9 +1006,13 @@ function Miner:refuel(simple)
 			-- and turtle.getFuelLevel() > 2 * self:getCostHome() then
 			refueled = true
 		elseif turtle.getFuelLevel() == 0 then
-			-- ran out of fuel
-			self:sendAlert()
-			self:error("NEED FUEL, STUCK")
+			-- ran out of fuel - try an adjacent inventory before giving up
+			if self:emergencyRefuelInPlace() then
+				refueled = true
+			else
+				self:sendAlert()
+				self:error("NEED FUEL, STUCK")
+			end
 		else
 			if not simple then -- for initializing
 			--if self:getCostHome() * 2 > turtle.getFuelLevel() then
@@ -969,8 +1021,12 @@ function Miner:refuel(simple)
 				if not self:getFuel() then
 					if not self:returnHome() and turtle.getFuelLevel() == 0 then
 						-- could not refuel, ran out on the way back home
-						self:sendAlert()
-						self:error("NEED FUEL, STUCK")
+						if self:emergencyRefuelInPlace() then
+							refueled = true
+						else
+							self:sendAlert()
+							self:error("NEED FUEL, STUCK")
+						end
 					else
 						self:error("NEED FUEL") -- -> terminates stripMine etc.
 					end
