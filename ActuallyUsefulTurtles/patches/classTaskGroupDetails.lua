@@ -38,7 +38,7 @@ local ui = {
 	headerDim = colors.gray,
 	divider = colors.gray,
 	danger  = colors.red,
-	frame   = colors.gray,
+	frameFallback = colors.white,
 }
 
 -- Every row and column in one place so drawn cells and click targets cannot
@@ -59,8 +59,9 @@ local L = {
 	-- take two short rows rather than one wide one that would run under it.
 	readRow    = 9,
 	readRow2   = 10,
-	-- Controls sit below the map frame's last row, not beside it.
-	ctrlRow    = 13,
+	-- One clear row below the map frame, which ends on winInfo row 12. At 13 the
+	-- buttons sat directly against it.
+	ctrlRow    = 14,
 }
 
 local function padLeft(text, width)
@@ -217,14 +218,55 @@ function GroupDetails:usableWidth()
 	return math.max(20, w)
 end
 
+function GroupDetails:headerWidth()
+	-- The title strip belongs to the details window itself, just like the
+	-- TASK GROUPS strip. Let it start at monitor row/column 1 and end directly
+	-- before the close-button overlay.
+	local inner = self.innerWin
+	local w = (inner and inner.getWidth and inner:getWidth()) or self.width
+	if self.btnClose and self.btnClose.visible then
+		local originX = (inner and inner.x or 1) - (inner and inner.scrollX or 0)
+		w = math.min(w, self.btnClose.x - 1 - originX)
+	end
+	return math.max(20, w)
+end
+
+function GroupDetails:layoutControls()
+	-- LABENHANCED_DETAILS_HMI
+	-- cancel and delete are mutually exclusive - cancel while the group runs,
+	-- delete once it does not. With fixed columns, whichever was hidden left a
+	-- hole in the row. Pack the operational controls left in the order they are
+	-- actually shown, and keep the destructive one right-aligned and apart.
+	local winInfo = self.winInfo
+	if not winInfo or not winInfo.btnAddTask then return end
+	local usable = self.usableWidthCache or self:usableWidth()
+
+	local x = L.padX
+	local function place(btn)
+		if not btn or not btn.visible then return end
+		btn:setPos(x, L.ctrlRow)
+		x = x + btn.width + 1
+	end
+	place(winInfo.btnAddTask)
+	place(winInfo.btnCancelTask)
+	place(winInfo.btnOptions)
+
+	if winInfo.btnDeleteGroup and winInfo.btnDeleteGroup.visible then
+		local dx = usable - winInfo.btnDeleteGroup.width + 1
+		if dx < x then dx = x end
+		winInfo.btnDeleteGroup:setPos(dx, L.ctrlRow)
+	end
+end
+
 function GroupDetails:layoutPanel()
 	local usable = self:usableWidth()
-	if self.winInfo and self.winInfo.boxHeader then
-		self.winInfo.boxHeader:setWidth(usable)
+	local headerWidth = self:headerWidth()
+	if self.boxHeader then
+		self.boxHeader:setWidth(headerWidth)
 	end
-	if self.winInfo and self.winInfo.lblTime then
-		local t = self.winInfo.lblTime:getText()
-		self.winInfo.lblTime:setPos(math.max(20, usable - #t), L.headerRow)
+	if self.lblTime then
+		local t = self.lblTime:getText()
+		self.lblTime:setPos(math.max(20, headerWidth - #t), L.headerRow)
 	end
 	self.usableWidthCache = usable
 end
@@ -238,7 +280,10 @@ function GroupDetails:initializeMiniMap()
 	-- panel rather than terrain floating on the window background.
 	self.boxMapFrame = Box:new(L.mapSelfX - 1, L.mapSelfY - 1, L.mapW + 2, L.mapH + 2,
 		colors.black)
-	self.boxMapFrame:setBorderColor(ui.frame)
+	-- The frame belongs to this task, so use the same semantic colour as its
+	-- header status rather than unrelated map/terrain chrome.
+	self.boxMapFrame:setBorderColor(
+		self.group and self.group:getStatusColor() or ui.frameFallback)
 	self:addObject(self.boxMapFrame)
 
 	self.winMap = MapDisplay:new(L.mapSelfX, L.mapSelfY, L.mapW, L.mapH)
@@ -260,6 +305,14 @@ function GroupDetails:initialize()
 	local ct, turtles = group:getAssignedTurtles()
 	self.turtleList = TurtleList:new(2, turtleListY, self.width-2, self.height - turtleListY, turtles)
 	self.turtleList:removeCloseButton()
+	-- The nested list's own scrollbar started halfway down the monitor and read
+	-- as a shortened page track. Put one scrollbar on the outer details window,
+	-- exactly like TASK GROUPS, but keep its reference on the turtle-list body so
+	-- the fixed summary and controls never scroll away.
+	self.turtleList:removeScrollBar()
+	self:addScrollbar(true)
+	self.innerWin.onMaxScrollYChanged = nil
+	self.scrollBar:setReferenceWindow(self.turtleList.innerWin)
 	self.turtleList.filter.inactive = false
 
 	self.winInfo = BasicWindow:new(2,2,self.width-2,self.turtleList.y - 2)
@@ -267,18 +320,20 @@ function GroupDetails:initialize()
 	local shortId = string.sub(tostring(group.shortId or group.id or "????"),1,4)
 
 	-- ---- header strip: id, status lamp, status, uptime ---------------------
-	winInfo.boxHeader = Box:new(1, L.headerRow, winInfo:getWidth(), 1, ui.header)
-	winInfo:addObject(winInfo.boxHeader)
-	winInfo.lblId = Label:new("GROUP " .. shortId, 2, L.headerRow, ui.headerText, ui.header)
-	winInfo.boxLamp = Box:new(14, L.headerRow, 1, 1, group:getStatusColor())
-	winInfo.boxLamp:setBorderColor(group:getStatusColor())
-	winInfo.lblStatus = Label:new(group:getStatus(), 16, L.headerRow,
+	-- This is attached to the outer details window, not the inset info panel,
+	-- so its gray plate is flush with the monitor's top edge like TASK GROUPS.
+	self.boxHeader = Box:new(1, L.headerRow, self:headerWidth(), 1, ui.header)
+	self.lblId = Label:new("GROUP " .. shortId, 2, L.headerRow, ui.headerText, ui.header)
+	self.boxLamp = Box:new(14, L.headerRow, 1, 1, group:getStatusColor())
+	self.boxLamp:setBorderColor(group:getStatusColor())
+	self.lblStatus = Label:new(group:getStatus(), 16, L.headerRow,
 		group:getStatusColor(), ui.header)
-	winInfo.lblTime = Label:new("00:00.00", 40, L.headerRow, ui.headerDim, ui.header)
-	winInfo:addObject(winInfo.lblId)
-	winInfo:addObject(winInfo.boxLamp)
-	winInfo:addObject(winInfo.lblStatus)
-	winInfo:addObject(winInfo.lblTime)
+	self.lblTime = Label:new("00:00.00", 40, L.headerRow, ui.headerDim, ui.header)
+	self:addObject(self.boxHeader)
+	self:addObject(self.lblId)
+	self:addObject(self.boxLamp)
+	self:addObject(self.lblStatus)
+	self:addObject(self.lblTime)
 
 	-- ---- AREA plate ---------------------------------------------------------
 	winInfo.lblAreaCap = Label:new("AREA", L.padX, L.capRow, ui.caption)
@@ -376,11 +431,14 @@ function GroupDetails:refresh()
 
 	-- LABENHANCED_DETAILS_HMI
 	-- One status colour drives the lamp and the label together.
-	winInfo.lblStatus:setText(tostring(status):upper():gsub("_"," "))
-	winInfo.lblStatus:setTextColor(statusColor)
-	if winInfo.boxLamp then
-		winInfo.boxLamp:setBackgroundColor(statusColor)
-		winInfo.boxLamp:setBorderColor(statusColor)
+	self.lblStatus:setText(tostring(status):upper():gsub("_"," "))
+	self.lblStatus:setTextColor(statusColor)
+	if self.boxLamp then
+		self.boxLamp:setBackgroundColor(statusColor)
+		self.boxLamp:setBorderColor(statusColor)
+	end
+	if self.boxMapFrame then
+		self.boxMapFrame:setBorderColor(statusColor)
 	end
 
 	-- clipped to the space before the map inset, so a long task name cannot
@@ -388,7 +446,7 @@ function GroupDetails:refresh()
 	winInfo.lblTask:setText(fitText(group.taskName or "no task", 19))
 	winInfo.lblActiveTurtles:setText(activeCount.."/"..tostring(group.groupSize))
 	winInfo.lblProgress:setText(group:getProgressText())
-	winInfo.lblTime:setText(group:getUptimeText())
+	self.lblTime:setText(group:getUptimeText())
 
 	winInfo.btnCancelTask:setEnabled(active)
 	winInfo.btnCancelTask.visible = active
@@ -401,6 +459,7 @@ function GroupDetails:refresh()
 	end
 
 	self:layoutPanel()
+	self:layoutControls()
 	self.turtleList:refresh()
 	self.winMap:refresh()
 end

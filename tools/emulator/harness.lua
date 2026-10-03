@@ -63,6 +63,12 @@ local function render()
 
 	local root = build(_G.global, say)
 	monitor:addObject(root)
+
+	-- BasicWindow:setVisible cascades to every child, and addObject calls it, so
+	-- any visibility a screen decided during build is undone here. Screens that
+	-- care register __afterAdd and settle their state once attached - which is
+	-- what the real controller does via its display loop.
+	if root.__afterAdd then root.__afterAdd() end
 	monitor:redraw()
 	monitor:update()
 	return monitor

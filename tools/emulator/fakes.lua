@@ -108,9 +108,12 @@ end
 
 M.scenarios = {
 	default = {
-		{ id = "28c2f0", status = "completed", taskName = "no task",
-		  groupSize = 0, active = 0, progress = 1.0, uptime = "00:00.00",
-		  area = { start = vec(0, 0, 0), finish = vec(0, 0, 0) } },
+		-- A completed group retains its task, area, final progress and elapsed
+		-- time. Keep those populated so the details preview is a faithful summary
+		-- of completed work rather than an artificial empty-state screen.
+		{ id = "28c2f0", status = "completed", taskName = "mineArea",
+		  groupSize = 4, active = 0, progress = 1.0, uptime = "12:43.60",
+		  area = { start = vec(-91, -59, 692), finish = vec(-127, -59, 671) } },
 		{ id = "536e11", status = "cancelled", taskName = "mineArea",
 		  groupSize = 4, active = 0, progress = 0.37, uptime = "03:58.85",
 		  area = { start = vec(-91, -59, 692), finish = vec(-127, -59, 671) } },
@@ -192,16 +195,35 @@ end
 -- a synthetic strip mine, so the map has recognisable corridors to look at.
 function M.buildMap()
 	local ChunkyMap = require("classChunkyMap")
+	local function blockAt(x,z)
+		if z % 4 == 0 then return 0 end   -- strip corridor (air)
+		if x % 16 == 0 then return 0 end  -- spine
+		return 1                          -- stone
+	end
+	local chunks = {}
 	return {
 		chunkSize = 16,
 		xyzToChunkId = ChunkyMap.xyzToChunkId,
 		xyzToRelativeChunkId = ChunkyMap.xyzToRelativeChunkId,
-		-- a chunk only needs _lastChange for the redraw freshness check
-		accessChunk = function() return { _lastChange = 0 } end,
+		-- MapDisplay's fast renderer reads chunk entries directly. Generate the
+		-- same synthetic terrain lazily so previews show the corridors that the
+		-- getBlockId path reports instead of an all-black map.
+		accessChunk = function(_,chunkId)
+			local chunk = chunks[chunkId]
+			if not chunk then
+				chunk = setmetatable({ _lastChange = 0 }, {
+					__index = function(_,relativeId)
+						if type(relativeId) ~= "number" then return nil end
+						local x,_,z = ChunkyMap.idsToXYZ(chunkId,relativeId)
+						return blockAt(x,z)
+					end,
+				})
+				chunks[chunkId] = chunk
+			end
+			return chunk
+		end,
 		getBlockId = function(_, x, y, z)
-			if z % 4 == 0 then return 0 end   -- strip corridor (air)
-			if x % 16 == 0 then return 0 end   -- spine
-			return 1                           -- stone
+			return blockAt(x,z)
 		end,
 	}
 end

@@ -22,7 +22,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 AUT="$REPO/ActuallyUsefulTurtles"
 EMU="$REPO/tools/emulator"
-OUT="$EMU/out"
+OUT="${AUT_EMULATOR_OUT:-$EMU/out}"
 APP="$HOME/.local/opt/craftos-pc/CraftOS-PC.x86_64.AppImage"
 
 [ -x "$APP" ] || { echo "CraftOS-PC not found at $APP" >&2; exit 1; }
@@ -135,4 +135,11 @@ if [ -n "$SHOT" ]; then
 else
   echo "--- no screenshot produced (exit $rc)" >&2
   exit 1
+fi
+
+# Keep the launcher (and therefore the GUI process) alive under automation
+# runners that reap background children as soon as their parent shell exits.
+# Closing the preview window lets the emulator and this command finish normally.
+if [ "$KEEP" = "1" ]; then
+  wait "$APPPID"
 fi

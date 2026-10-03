@@ -102,6 +102,7 @@ function MapDisplay:new(x,y,width,height,map)
 	o.mapMidZ = 0
 	o.zoomLevel = 1
 	o.zoomBase = 1 -- TODO: when starting with 1:2, the level should be 0.5 and base 2, not 1:2
+	o.selectionAlignToTunnel = false
 	local zoomText = o.zoomLevel < 1 and "1:"..o.zoomBase or (o.zoomLevel .. ":" .. o.zoomBase)
 	self.displayTurtles = true
 	self.displayHome = true
@@ -373,6 +374,119 @@ function MapDisplay:isOnChrome(x, y)
 	return false
 end
 
+-- A terminal touch reports a CHARACTER cell, while the map packs six terrain
+-- pixels into that character (2 across by 3 down). At 1:1, the old conversion
+-- always returned the top-left pixel, making the other five world coordinates
+-- impossible to select. Do not pull the whole point toward nearby air. Instead,
+-- resolve only the axis made unambiguous by a tunnel actually crossing the
+-- touched cell: a horizontal run supplies Z, a vertical run supplies X, and a
+-- distinct endpoint/corner/junction supplies both. Solid or ambiguous cells
+-- keep the normal grid coordinate.
+function MapDisplay:alignPositionToTunnelAxis(x,z)
+	local zoom = self.zoomLevel
+	local map = self.map
+	if zoom < 1 or zoom % 1 ~= 0
+	or not map or type(map.getBlockId) ~= "function" then
+		return x,z
+	end
+
+	local y = self.mapMidY
+	local cache = {}
+	local function isTunnel(wx,wz)
+		local key = wx .. ":" .. wz
+		local value = cache[key]
+		if value == nil then
+			value = map:getBlockId(wx,y,wz) == 0 and 1 or 0
+			cache[key] = value
+		end
+		return value == 1
+	end
+
+	local bestCorner
+	local cornerCount = 0
+	local soleEndpoint
+	local endpointCount = 0
+	local soleOpen
+	local openCount = 0
+	local bestHorizontal
+	local bestVertical
+	local function prefer(current,candidate)
+		if not current
+		or candidate.neighbours > current.neighbours
+		or (candidate.neighbours == current.neighbours
+			and candidate.distance < current.distance) then
+			return candidate
+		end
+		return current
+	end
+
+	for pixelZ = 0,2 do
+		for pixelX = 0,1 do
+			local wx = x + pixelX * zoom
+			local wz = z + pixelZ * zoom
+			if isTunnel(wx,wz) then
+				openCount = openCount + 1
+				-- Score real block neighbours, not sampled map pixels. That keeps a
+				-- one-block-wide tunnel recognisable at every integer zoom level.
+				local left  = isTunnel(wx-1,wz)
+				local right = isTunnel(wx+1,wz)
+				local up    = isTunnel(wx,wz-1)
+				local down  = isTunnel(wx,wz+1)
+				local horizontal = left or right
+				local vertical = up or down
+				local neighbours = (left and 1 or 0) + (right and 1 or 0)
+					+ (up and 1 or 0) + (down and 1 or 0)
+				-- Doubled subpixel distance avoids fractional arithmetic. Both X
+				-- columns are equally close; the middle Z row is the natural tie.
+				local distance = math.abs(pixelX * 2 - 1)
+					+ math.abs(pixelZ * 2 - 2)
+				local candidate = {
+					x = wx, z = wz, neighbours = neighbours, distance = distance,
+				}
+				soleOpen = candidate
+				if horizontal and vertical then
+					cornerCount = cornerCount + 1
+					bestCorner = prefer(bestCorner,candidate)
+				elseif horizontal then
+					bestHorizontal = prefer(bestHorizontal,candidate)
+				elseif vertical then
+					bestVertical = prefer(bestVertical,candidate)
+				end
+				if neighbours == 1 then
+					endpointCount = endpointCount + 1
+					soleEndpoint = candidate
+				end
+			end
+		end
+	end
+
+	-- These features identify one exact subpixel rather than merely a line. Only
+	-- accept a unique one; several candidates in one character are ambiguous.
+	if cornerCount == 1 then return bestCorner.x,bestCorner.z end
+	if endpointCount == 1 then return soleEndpoint.x,soleEndpoint.z end
+	if openCount == 1 then return soleOpen.x,soleOpen.z end
+
+	-- A featureless straight run identifies only its perpendicular axis.
+	if bestHorizontal and not bestVertical then return x,bestHorizontal.z end
+	if bestVertical and not bestHorizontal then return bestVertical.x,z end
+
+	-- Two unrelated runs inside one character are ambiguous: choosing either
+	-- would be the magnetic snapping this mode deliberately avoids.
+	return x,z
+end
+
+function MapDisplay:positionForCell(x,y,alignToTunnel)
+	local varX = self.mapMidX + (x - self.midWidth - 1) * self.zoomLevel * 2
+	local varZ = self.mapMidZ + (y - self.midHeight - 1) * self.zoomLevel * 3
+
+	varX = math.floor(varX + 0.5)
+	varZ = math.floor(varZ + 0.5)
+	if alignToTunnel then
+		varX,varZ = self:alignPositionToTunnelAxis(varX,varZ)
+	end
+	return varX,varZ
+end
+
 function MapDisplay:handleClick(x,y) -- super override 
 	-- doesnt work because the elements speak to the monitor directly
 	local o = self:getObjectByPos(x,y)
@@ -381,14 +495,13 @@ function MapDisplay:handleClick(x,y) -- super override
 	if o and o.handleClick then
 		o:handleClick(x,y)
 	elseif not o and self.visible and not self:isOnChrome(x, y) then
-		varX = self.mapMidX + (x - self.midWidth - 1) * self.zoomLevel * 2
-		varZ = self.mapMidZ + (y - self.midHeight - 1) * self.zoomLevel * 3
-
-		varX = math.floor(varX + 0.5)
-		varZ = math.floor(varZ + 0.5)
+		local varX,varZ = self:positionForCell(
+			x,y,self.doSelectPosition and self.selectionAlignToTunnel
+		)
 
 		if self.doSelectPosition then
 			self.doSelectPosition = false
+			self.selectionAlignToTunnel = false
 			if self.onPositionSelected then self:onPositionSelected(varX, self.mapMidY, varZ) end
 		else
 			self:setMid(varX, self.mapMidY, varZ)
@@ -1353,9 +1466,10 @@ end
 -- pseudo function to be set by the caller of selectPosition
 function MapDisplay:onPositionSelected(x,y,z) end
 
-function MapDisplay:selectPosition()
+function MapDisplay:selectPosition(alignToTunnel)
 	-- needs to return a position but is not allowed to block the current process
 	self.doSelectPosition = true
+	self.selectionAlignToTunnel = alignToTunnel and true or false
 end
 
 return MapDisplay

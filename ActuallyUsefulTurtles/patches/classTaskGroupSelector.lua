@@ -103,6 +103,11 @@ function TaskGroupSelector:new(x,y, taskManager, slowStart)
 	o.selectionMode = false
 	o.btnConfirmArea = nil
 	o.btnReselectArea = nil
+	o.lblAreaNudge = nil
+	o.btnNudgeXMinus = nil
+	o.btnNudgeXPlus = nil
+	o.btnNudgeZMinus = nil
+	o.btnNudgeZPlus = nil
 	o.btnSelectionMode = nil
 	o.btnCursorMode = nil
 	o.cursorMode = false
@@ -450,6 +455,10 @@ function TaskGroupSelector:close()
 		self.closeOwner:addObjectInternal(self.closeOwner.btnClose)
 		self.closeOwner = nil
 	end
+	-- Restore the page header's X-sized reservation before close redraws it.
+	if self.hostDisplay and self.hostDisplay.refreshGroupsHeader then
+		self.hostDisplay:refreshGroupsHeader()
+	end
 	return Window.close(self)
 end
 
@@ -531,6 +540,11 @@ function TaskGroupSelector:clearAreaControls()
 
 	self.btnConfirmArea = nil
 	self.btnReselectArea = nil
+	self.lblAreaNudge = nil
+	self.btnNudgeXMinus = nil
+	self.btnNudgeXPlus = nil
+	self.btnNudgeZMinus = nil
+	self.btnNudgeZPlus = nil
 end
 
 local function drawModeToggle(cb)
@@ -574,9 +588,10 @@ function TaskGroupSelector:setMapInteractionMode(cursorMode)
 	if self.mapDisplay then
 		if self.cursorMode then
 			self.mapDisplay.doSelectPosition = false
+			self.mapDisplay.selectionAlignToTunnel = false
 		else
 			self.mapDisplay.onPositionSelected = function(objRef,x,y,z) self:onAreaSelected(x,y,z) end
-			self.mapDisplay:selectPosition()
+			self.mapDisplay:selectPosition(true)
 		end
 		self.mapDisplay:redraw()
 	end
@@ -618,6 +633,7 @@ function TaskGroupSelector:clearAreaPreview()
 	self:clearModeControls()
 	if self.mapDisplay then
 		self.mapDisplay.doSelectPosition = false
+		self.mapDisplay.selectionAlignToTunnel = false
 	end
 	self:clearSelectionOverlay()
 	self:clearAreaControls()
@@ -645,6 +661,62 @@ function TaskGroupSelector:layoutAreaControls()
 
 	-- Raise both action buttons one row for cleaner alignment with the top controls.
 	return deselectX, confirmX, 1
+end
+
+-- A monitor touch identifies a terminal character, not one of the 2x3 map
+-- pixels packed into it. These one-block controls make every X/Z coordinate
+-- reachable after the coarse touch, including alignment with a tunnel that is
+-- elsewhere on the same row or column. POS1 is active until POS2 exists;
+-- afterwards WorldEdit-style editing keeps POS1 fixed and nudges POS2.
+function TaskGroupSelector:nudgeAreaPosition(dx,dz)
+	local count = self.positions and #self.positions or 0
+	if count == 0 or not self.selectionMode then return true end
+	local index = count >= 2 and 2 or 1
+	local p = self.positions[index]
+	if not p then return true end
+
+	self.positions[index] = vector.new(p.x + dx,p.y,p.z + dz)
+	self:refresh()
+	self:updateAreaPreview()
+	return true
+end
+
+function TaskGroupSelector:showAreaNudgeControls(count,startX)
+	if not self.mapDisplay then return end
+	local right = self.mapDisplay.btnClose.x - 1
+	-- "POS2 X- X+ Z- Z+" needs 20 cells. On a tiny/pocket display the normal
+	-- map remains usable; exact editing is still available by zooming in.
+	if right - startX + 1 < 20 then return end
+
+	local y = 2
+	if not self.lblAreaNudge then
+		self.lblAreaNudge = Label:new("POS1",startX,y,colors.green,colors.black)
+		self.lblAreaNudge.areaPreviewOwner = self
+		self.mapDisplay:addObject(self.lblAreaNudge)
+
+		local function addButton(text,x,dx,dz)
+			local button = Button:new(text,x,y,3,1,colors.gray)
+			button:setTextColor(colors.white)
+			button.areaPreviewOwner = self
+			button.click = function() return self:nudgeAreaPosition(dx,dz) end
+			self.mapDisplay:addObject(button)
+			return button
+		end
+
+		self.btnNudgeXMinus = addButton("X-",startX + 5,-1,0)
+		self.btnNudgeXPlus  = addButton("X+",startX + 9, 1,0)
+		self.btnNudgeZMinus = addButton("Z-",startX + 13,0,-1)
+		self.btnNudgeZPlus  = addButton("Z+",startX + 17,0, 1)
+	end
+
+	local editingPos2 = count >= 2
+	self.lblAreaNudge:setPos(startX,y)
+	self.btnNudgeXMinus:setPos(startX + 5,y)
+	self.btnNudgeXPlus:setPos(startX + 9,y)
+	self.btnNudgeZMinus:setPos(startX + 13,y)
+	self.btnNudgeZPlus:setPos(startX + 17,y)
+	self.lblAreaNudge:setText(editingPos2 and "POS2" or "POS1")
+	self.lblAreaNudge:setTextColor(editingPos2 and colors.magenta or colors.green)
 end
 
 function TaskGroupSelector:showAreaControls()
@@ -701,6 +773,8 @@ function TaskGroupSelector:showAreaControls()
 		self.mapDisplay:removeObject(self.btnConfirmArea)
 		self.btnConfirmArea = nil
 	end
+
+	self:showAreaNudgeControls(count,deselectX)
 end
 
 function TaskGroupSelector:updateAreaPreview()
@@ -794,7 +868,7 @@ function TaskGroupSelector:reselectArea()
 	self:refresh()
 	self:showAreaControls()
 	self.mapDisplay.onPositionSelected = function(objRef,x,y,z) self:onAreaSelected(x,y,z) end
-	self.mapDisplay:selectPosition()
+	self.mapDisplay:selectPosition(true)
 	self.mapDisplay:redraw()
 end
 
@@ -814,7 +888,7 @@ function TaskGroupSelector:selectArea()
 	self.selectionMode = true
 	self.cursorMode = false
 	self.mapDisplay.onPositionSelected = function(objRef,x,y,z) self:onAreaSelected(x,y,z) end
-	self.mapDisplay:selectPosition()
+	self.mapDisplay:selectPosition(true)
 	self:openMap()
 	self:showModeControls()
 	self:setMapInteractionMode(false)
@@ -854,7 +928,7 @@ function TaskGroupSelector:onAreaSelected(x, y, z)
 			self.mapDisplay.onPositionSelected = function(objRef,sx,sy,sz)
 				self:onAreaSelected(sx,sy,sz)
 			end
-			self.mapDisplay:selectPosition()
+			self.mapDisplay:selectPosition(true)
 		end
 	end
 end
