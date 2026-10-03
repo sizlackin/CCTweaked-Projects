@@ -26,9 +26,10 @@ function screens.groups(global, say)
 	local Box = require("classBox")
 	local Label = require("classLabel")
 	local Button = require("classButton")
-	local TaskGroupControl = require("classTaskGroupControl")
 
 	local w, h = term.getSize()
+	-- Callable from a logic test, which has no log to write to.
+	say = say or function() end
 	say("building groups page %dx%d", w, h)
 
 	-- A HostDisplay-shaped host without running its full initialize(): we want
@@ -57,28 +58,36 @@ function screens.groups(global, say)
 	win:addObject(win.lblSummary)
 	win:addObject(win.lblAdd)
 	win:addObject(win.btnAdd)
-	win:addScrollbar(true)
 
-	-- rows, ordered so the screenshot is stable between runs
-	local ids = {}
-	for id in pairs(global.taskManager:getGroups()) do ids[#ids + 1] = id end
-	table.sort(ids)
-
-	for _, id in ipairs(ids) do
-		local group = global.taskManager:getGroups()[id]
-		local row = TaskGroupControl:new(1, 3 + 6 * win.groupCt, group)
-		win:addObject(row)
-		row:fillWidth()
-		row.hostDisplay = host
-		row.mapDisplay = nil
-		win.taskGroupControls[id] = row
-		win.groupCt = win.groupCt + 1
-		say("row %s status=%s width=%d", id, group:getStatus(), row.width)
-	end
+	-- LABENHANCED_GROUPS_MASTERDETAIL
+	-- Build the rail and the pane through HostDisplay itself. The preview then
+	-- exercises the real construction, the real sort order and the real
+	-- selection logic rather than a copy of them that can rot.
+	host:buildGroupsChrome(win)
 
 	win.visible = true
 	win.__host = host          -- so a modal preview can drive header focus
+	host:layoutGroupsPage()
+	host:updateGroups()
 	host:refreshGroupsHeader()
+
+	-- Being added to the monitor cascades setVisible over every child, which
+	-- re-shows the rail scrollbar this page may have decided to hide. Settle it
+	-- again once attached - the real controller gets this for free because
+	-- displayGroups runs updateGroups after addObject.
+	win.__afterAdd = function() host:updateGroups() end
+
+	local rowIds = {}
+	for id in pairs(win.taskGroupControls) do rowIds[#rowIds + 1] = id end
+	table.sort(rowIds)
+	for _, id in ipairs(rowIds) do
+		local row = win.taskGroupControls[id]
+		say("rail %s status=%s y=%d w=%d sel=%s", id, row.taskGroup:getStatus(),
+			row.y, row.width, tostring(row.selected))
+	end
+	say("pane: group=%s x=%d w=%d h=%d",
+		tostring(win.pane.taskGroup and win.pane.taskGroup.id),
+		win.pane.x, win.pane.width, win.pane.height)
 	say("header: plate=%d btnAdd.x=%d lblAdd=%q lblSummary=%q btnClose.x=%s innerWin=%d",
 		win.boxHeader.width, win.btnAdd.x, win.lblAdd:getText(),
 		win.lblSummary:getText(), tostring(win.btnClose and win.btnClose.x),
@@ -101,6 +110,7 @@ function screens.newgroup(global, say)
 	sel:setHostDisplay(page.__host)   -- lets centerIn/close dim the page header
 	page:addObject(sel)
 	sel:centerIn(page)
+	page.__host:refreshGroupsHeader()
 
 	local stage = global.__stage or "area"
 	if stage ~= "empty" then
@@ -164,6 +174,42 @@ function screens.map(global, say)
 	return md
 end
 
+-- Interactive WorldEdit-style selection preview. The fake mine deliberately
+-- uses four-block row spacing while touch coordinates normally advance three
+-- blocks per character row, making the formerly unreachable tunnel pixels easy
+-- to exercise. It uses the real TaskGroupSelector overlay and fine controls;
+-- later map clicks move POS2 exactly like the live group selector.
+function screens.selection(global, say)
+	local MapDisplay = require("classMapDisplay")
+	local TaskGroupSelector = require("classTaskGroupSelector")
+	local fakes = require("fakes")
+	local w,h = term.getSize()
+	local md = MapDisplay:new(1,1,w,h)
+	md:setMap(fakes.buildMap())
+	md:setMid(0,-59,0)
+
+	local selector = setmetatable({
+		mapDisplay = md,
+		positions = {
+			vector.new(-20,-59,-8),
+			vector.new(20,-59,8),
+		},
+		selectionMode = true,
+		cursorMode = false,
+		refresh = function() end,
+		redraw = function() end,
+		closeMap = function() end,
+	}, { __index = TaskGroupSelector })
+
+	md.onPositionSelected = function(_,x,y,z) selector:onAreaSelected(x,y,z) end
+	selector:showModeControls()
+	selector:updateAreaPreview()
+	md:selectPosition(true)
+	md.__selector = selector -- keep the preview controller reachable for its callbacks
+	say("selection preview: map clicks move POS2; X-/X+/Z-/Z+ nudge it one block")
+	return md
+end
+
 -- Group > details, as HostDisplay:openGroupDetails builds it.
 function screens.details(global, say)
 	local GroupDetails = require("classTaskGroupDetails")
@@ -175,12 +221,25 @@ function screens.details(global, say)
 	local ids = {}
 	for id in pairs(groups) do ids[#ids+1] = id end
 	table.sort(ids)
-	local group = groups[ids[#ids]]      -- the started one
+	-- A status-named scenario picks that group while retaining the default fake
+	-- dataset. This exercises terminal control reflow and status-coloured chrome.
+	local group = groups[ids[#ids]]
+	local requestedStatus = global.__stage or ""
+	if requestedStatus == "completed" or requestedStatus == "cancelled" then
+		for _, id in ipairs(ids) do
+			if groups[id]:getStatus() == requestedStatus then
+				group = groups[id]
+				break
+			end
+		end
+	end
 
 	local d = GroupDetails:new(1, 1, group)
 	d:setSize(w, h)
 	if d.onResize then d:onResize() end
 	d:refresh()   -- otherwise the render shows initialize()'s placeholder values
+	-- and again once attached, because addObject re-shows every hidden child
+	d.__afterAdd = function() d:refresh() end
 	say("details: group %s status=%s size=%dx%d", tostring(group.id),
 		group:getStatus(), d.width, d.height)
 	if d.winMap then

@@ -59,6 +59,7 @@ ActuallyUsefulTurtles/controller/gui/classStorageItemControl.lua	gui/classStorag
 ActuallyUsefulTurtles/controller/gui/classTaskControl.lua	gui/classTaskControl.lua	vendor
 ActuallyUsefulTurtles/patches/classTaskGroupControl.lua	gui/classTaskGroupControl.lua	patch
 ActuallyUsefulTurtles/patches/classTaskGroupDetails.lua	gui/classTaskGroupDetails.lua	patch
+ActuallyUsefulTurtles/patches/classTaskGroupPane.lua	gui/classTaskGroupPane.lua	patch
 ActuallyUsefulTurtles/patches/classTaskGroupSelector.lua	gui/classTaskGroupSelector.lua	patch
 ActuallyUsefulTurtles/controller/gui/classTaskList.lua	gui/classTaskList.lua	vendor
 ActuallyUsefulTurtles/controller/gui/classTaskSelector.lua	gui/classTaskSelector.lua	vendor

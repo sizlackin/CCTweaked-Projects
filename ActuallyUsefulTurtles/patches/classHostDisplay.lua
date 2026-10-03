@@ -13,6 +13,7 @@ local BasicWindow = require("classBasicWindow")
 local MapDisplay = require("classMapDisplay")
 local TaskGroupSelector = require("classTaskGroupSelector")
 local TaskGroupControl = require("classTaskGroupControl")
+local TaskGroupPane = require("classTaskGroupPane")
 local StorageDisplay = require("classStorageDisplay")
 local ScrollBar = require("classScrollBar")
 local TurtleList = require("classTurtleList")
@@ -24,6 +25,23 @@ local default = {
 		background = colors.black,
 	},
 }
+
+-- LABENHANCED_GROUPS_MASTERDETAIL
+-- Geometry of the Groups page, in one place so the rail, the divider rule and
+-- the detail pane cannot drift apart. Only the pane's width tracks the window;
+-- the rail is fixed, because a wider rail buys nothing once the id and the
+-- abbreviated status fit.
+local groupsLayout = {
+	top         = 3,
+	railW       = 15,
+	ruleX       = 16,
+	paneX       = 17,
+	-- The page's close button overlays the last columns of row 1. Keep the pane
+	-- clear of them so a wide readout never runs under the X.
+	rightGutter = 3,
+	minPaneW    = 20,
+}
+
 local global = global
 
 local HostDisplay = BasicWindow:new()
@@ -283,7 +301,8 @@ function HostDisplay:initialize()
 	self.winGroups:addObject(self.winGroups.lblSummary)
 	self.winGroups:addObject(self.winGroups.lblAdd)
 	self.winGroups:addObject(self.winGroups.btnAdd)
-	self.winGroups:addScrollbar(true)
+
+	self:buildGroupsChrome(self.winGroups)
 	-- initial redraw
 	-- self:redraw()
 
@@ -448,6 +467,10 @@ function HostDisplay:openGroupDetails(group)
 	detailsWindow:setHostDisplay(self)
 	self:addObject(detailsWindow)
 	detailsWindow:fillParent()
+	-- Adding a window makes every child visible, and fillParent establishes its
+	-- final width. Settle status-dependent visibility, packed controls and padded
+	-- coordinate fields now so the first frame is already the final layout.
+	detailsWindow:refresh()
 	self:redraw()
 	return true
 end
@@ -477,9 +500,10 @@ end
 function HostDisplay:displayGroups()
 	self:addObject(self.winGroups)
 	self.winGroups:fillParent()
-	for _,taskControl in pairs(self.winGroups.taskGroupControls) do
-		taskControl:fillWidth()
-	end
+	-- LABENHANCED_GROUPS_MASTERDETAIL
+	-- Rail rows keep their fixed width now; it is the pane that tracks the
+	-- page, and it can only be sized once fillParent has settled this window.
+	self:layoutGroupsPage()
 	self:updateGroups()
 	self:redraw()
 	return true
@@ -499,7 +523,86 @@ function HostDisplay:addGroup()
 	self.winGroups:addObject(self.winGroups.groupSelector)
 	-- LABENHANCED_NEWGROUP_HMI: a centred panel, not a full-page form
 	self.winGroups.groupSelector:centerIn(self.winGroups)
+	-- centerIn removes the page X. Reflow the title row before this redraw so
+	-- create/+ occupies that newly available slot on the very first frame.
+	self:refreshGroupsHeader()
 	self:redraw()
+	return true
+end
+
+-- LABENHANCED_GROUPS_MASTERDETAIL
+-- Builds the master/detail furniture onto a Groups window: a scrolling rail of
+-- one-line groups, a divider rule, and the detail pane. Shared with the
+-- emulator harness so a preview exercises the real construction rather than a
+-- copy that can rot.
+function HostDisplay:buildGroupsChrome(win)
+	win.railWin = Window:new(1, groupsLayout.top, groupsLayout.railW, 1)
+	win.railWin:removeCloseButton()
+	win.railWin:setBackgroundColor(colors.black)
+	win.railWin:setBorderColor(colors.black)
+	-- The rail owns the scrollbar, not the page: scrolling a long group list
+	-- must not drag the detail pane off the top of the screen with it.
+	win.railWin:addScrollbar(true)
+	win:addObject(win.railWin)
+
+	win.boxRailRule = Box:new(groupsLayout.ruleX, groupsLayout.top, 1, 1,
+		colors.gray)
+	win:addObject(win.boxRailRule)
+
+	win.pane = TaskGroupPane:new(groupsLayout.paneX, groupsLayout.top,
+		groupsLayout.minPaneW, 1)
+	win.pane:setHostDisplay(self)
+	win:addObject(win.pane)
+
+	win.selectedId = nil
+	return win
+end
+
+-- Sizes the rail, the rule and the pane to the page. Called whenever the page
+-- is shown or resized; the heights are only knowable once fillParent has run.
+function HostDisplay:layoutGroupsPage()
+	local win = self.winGroups
+	if not (win and win.railWin) then return end
+
+	local width = (win.getWidth and win:getWidth()) or self:getWidth()
+	local height = (win.getHeight and win:getHeight()) or self:getHeight()
+	local bodyH = math.max(1, height - groupsLayout.top + 1)
+
+	win.railWin:setSize(groupsLayout.railW, bodyH)
+	-- Box has no setSize, only the two setters.
+	win.boxRailRule:setWidth(1)
+	win.boxRailRule:setHeight(bodyH)
+	win.pane:setSize(
+		math.max(groupsLayout.minPaneW,
+			width - groupsLayout.rightGutter - groupsLayout.paneX + 1),
+		bodyH)
+end
+
+-- Ids of the groups the rail shows, in a stable order. pairs() order is
+-- arbitrary, so without this the rail reshuffles itself every rebuild.
+function HostDisplay:sortedGroupIds()
+	local ids = {}
+	for id, group in pairs(self.taskManager:getGroups()) do
+		if group.status ~= "new" then ids[#ids + 1] = id end
+	end
+	table.sort(ids, function(a, b) return tostring(a) < tostring(b) end)
+	return ids
+end
+
+-- Drives the pane from the rail. Passing nil clears the selection, which is
+-- what a delete leaves behind.
+function HostDisplay:selectGroup(id)
+	local win = self.winGroups
+	if not win then return end
+
+	local group = id and self.taskManager:getGroups()[id] or nil
+	if id and not group then id = nil end
+
+	win.selectedId = id
+	for cid, control in pairs(win.taskGroupControls) do
+		control:setSelected(cid == id)
+	end
+	if win.pane then win.pane:setGroup(group) end
 	return true
 end
 
@@ -511,15 +614,14 @@ function HostDisplay:refreshGroupsHeader()
 	local win = self.winGroups
 	if not win or not win.boxHeader then return end
 
-	-- Header objects live in the inner window, which a vertical scrollbar
-	-- already narrows by one, and the close button is an overlay painted on top
-	-- of it. Derive the last usable column from where that button actually is
-	-- rather than reserving a guessed number of spaces: children of innerWin
-	-- draw at (inner.x - inner.scrollX + localX), so convert btnClose's window
-	-- coordinate into an inner-local one. The plate then butts right up against
-	-- the X with no dead gap.
+	-- The scrollbar narrows innerWin by one column, but its track starts below
+	-- the three-row close-button slot. Row 1 can therefore use the full outer
+	-- width whenever the X is suppressed by the new-group modal. When the X is
+	-- present, clip against its real position instead of reserving guessed space.
 	local inner = win.innerWin
-	local width = (inner and inner.getWidth and inner:getWidth()) or self:getWidth()
+	local width = (win.getWidth and win:getWidth())
+		or (inner and inner.getWidth and inner:getWidth())
+		or self:getWidth()
 
 	local titleEnd = 13
 	local usable = width
@@ -569,19 +671,53 @@ end
 
 function HostDisplay:updateGroups()
 	if self.winGroups.visible then
+		-- LABENHANCED_GROUPS_MASTERDETAIL
+		-- Rows are one line each and live in the rail, and their y comes from
+		-- the sorted position rather than creation order, so inserting a group
+		-- no longer leaves the list in whatever order pairs() happened to hand
+		-- back.
 		local taskControls = self.winGroups.taskGroupControls
 		local groups = self.taskManager:getGroups()
-		for id,taskGroup in pairs(groups) do
-			if taskGroup.status ~= "new" then
-				if not taskControls[id] then
-					taskControls[id] = TaskGroupControl:new(1,3+6*self.winGroups.groupCt, taskGroup)
-					self.winGroups:addObject(taskControls[id])
-					taskControls[id]:fillWidth()
-					taskControls[id]:setHostDisplay(self)
-					self.winGroups.groupCt = self.winGroups.groupCt + 1
-				end
+		local ids = self:sortedGroupIds()
+
+		for index, id in ipairs(ids) do
+			local control = taskControls[id]
+			if not control then
+				control = TaskGroupControl:new(1, index, groups[id])
+				taskControls[id] = control
+				self.winGroups.railWin:addObject(control)
+				control:setHostDisplay(self)
+			end
+			control:setTaskGroup(groups[id])
+			control:setPos(1, index)
+		end
+		self.winGroups.groupCt = #ids
+
+		-- The rail only needs a scrollbar when the list outruns it. Showing one
+		-- for four groups puts a full-height track down the middle of the page.
+		local rail = self.winGroups.railWin
+		if rail and rail.scrollBar then
+			local rows = (rail.innerWin and rail.innerWin:getHeight())
+				or rail:getHeight()
+			rail.scrollBar.visible = (#ids > rows)
+		end
+
+		-- A group can vanish underneath us (deleted elsewhere, or cancelled into
+		-- a status the rail does not list).
+		for id, control in pairs(taskControls) do
+			if not groups[id] or groups[id].status == "new" then
+				self.winGroups.railWin:removeObject(control)
+				taskControls[id] = nil
 			end
 		end
+
+		-- Keep a selection whenever there is anything to select, so the pane is
+		-- never blank beside a populated rail.
+		local selected = self.winGroups.selectedId
+		if not selected or not taskControls[selected] then
+			self:selectGroup(ids[1])
+		end
+
 		self:refreshGroupsHeader()
 		self.winGroups:redraw()
 	end
@@ -589,10 +725,12 @@ end
 function HostDisplay:deleteGroup(id)
 	-- delete all group controls and rebuild them
 	for _,groupControl in pairs(self.winGroups.taskGroupControls) do
-		self.winGroups:removeObject(groupControl)
+		self.winGroups.railWin:removeObject(groupControl)
 	end
 	self.winGroups.taskGroupControls = {}
 	self.winGroups.groupCt = 0
+	-- The pane was showing the group that just went away.
+	self:selectGroup(nil)
 end
 
 function HostDisplay:globalReboot(slow)
