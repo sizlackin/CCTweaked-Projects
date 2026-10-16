@@ -168,31 +168,40 @@ local function buildFrames(rows)
     sphereFrames[phase] = f
   end
 
-  -- Dormant: same silhouette, lit statically from above, dim gray.
+  -- Dormant: same silhouette, but reads as a globe even when still:
+  -- a slightly brighter rim traces the outline, the body has a vertical
+  -- gradient with a scanline texture, everything stays dim gray.
   dormantFrame = {}
   for row = 1, sphereRows do
     local line = {}
     local dy = row - cy
+    local absdy = math.abs(dy)
     local halfW = math.sqrt(math.max(0, maxR * maxR - dy * dy)) * 2
     for col = 1, sphereCols do
       line[col] = { " ", C.black }
       local dx = (col - cx) / 2
       if math.abs(dx) <= halfW then
-        local dz = math.sqrt(math.max(0, halfW * halfW - dx * dx)) / 2
-        local lightness = (dz / maxR) * (1 - (math.abs(dy) / maxR) * 0.35)
-        local level = math.floor(lightness * (#SHADE_DORMANT - 1)) + 1
-        -- Shadow side stays visible here too, for the same reason.
-        if level < 2 then level = 2 end
-        line[col] = { SHADE_DORMANT[level], C.dormant }
+        local edge = halfW - math.abs(dx)
+        local glyph, fg
+        if edge <= 1.0 then
+          glyph, fg = SHADE_DORMANT[#SHADE_DORMANT], C.muted -- rim
+        else
+          local lightness = 1 - absdy / maxR
+          if row % 2 == 0 then lightness = lightness * 0.55 end
+          local level = math.max(2,
+            math.floor(lightness * (#SHADE_DORMANT - 2)) + 2)
+          glyph, fg = SHADE_DORMANT[level], C.dormant
+        end
+        line[col] = { glyph, fg }
       end
     end
     dormantFrame[row] = line
   end
-  -- small static highlight, upper left
-  local hx = math.floor(sphereCols * 0.38)
-  local hy = math.max(2, math.floor(sphereRows * 0.28))
+  -- small static gleam, upper left, just inside the rim
+  local hx = math.floor(sphereCols * 0.35)
+  local hy = math.max(2, math.floor(sphereRows * 0.3))
   if dormantFrame[hy][hx][1] ~= " " then
-    dormantFrame[hy][hx] = { "*", C.muted }
+    dormantFrame[hy][hx] = { "*", C.white }
   end
 end
 
@@ -212,7 +221,8 @@ end
 -- Vertical budget.
 -- Full walls (H >= 13):
 --   rows 2..4: header + subtitle + accent
---   rows 5..(4+SR): sphere  (SR = H - 10, clamped 5..12)
+--   row 5: breathing room under the accent
+--   rows 6..(5+SR): sphere  (SR = H - 11, clamped 5..12)
 --   +1: label row (solar left, wind right)
 --   +1: value row (aligned under labels)
 --   +1 blank, then link row and detail row
@@ -229,8 +239,8 @@ if compact then
   linkY = valueRow + 1
   detailY = linkY + 1
 else
-  sphereTop = 5
-  SR = math.max(5, math.min(12, H - 10))
+  sphereTop = 6
+  SR = math.max(5, math.min(12, H - 11))
   labelRow = sphereTop + SR
   valueRow = labelRow + 1
   linkY = valueRow + 2
@@ -309,18 +319,24 @@ local function render(now)
   -- Fleet readouts: left solar, right wind, aligned columns.
   -- Wide walls: side-by-side blocks. Narrow terminals: stacked rows.
   local solarProducing = solarPowered and isOnline(now)
-  local solarValue = string.format("%02d %s", solar,
+  -- While no message has ever arrived, counts are unknown, not zero:
+  -- show "--" so an idle billboard does not read as an empty fleet.
+  local solarCountText = (lastSeen == 0 and solar == 0) and "--"
+    or string.format("%02d", solar)
+  local windCountText = (lastSeen == 0 and wind == 0) and "--"
+    or string.format("%02d", wind)
+  local solarValue = string.format("%s %s", solarCountText,
     solarProducing and "PRODUCING" or "CONFIGURED")
-  local windValue = string.format("%02d CONFIGURED", wind)
+  local windValue = string.format("%s CONFIGURED", windCountText)
 
   if W >= 37 then
     local leftX = 3
-    local rightX = W - 15          -- label "> WIND TURBINES" ends exactly at W-1
+    local rightX = W - 17          -- mirror the left block's 4-space indent
     writeText(labelRow, leftX, "> SOLAR ARRAYS", C.solar)
     writeText(labelRow, rightX, "> WIND TURBINES", C.wind)
     writeText(valueRow, leftX + 4, solarValue,
       solarProducing and C.good or C.white)
-    writeText(valueRow, rightX + 2, windValue, C.white)
+    writeText(valueRow, rightX + 4, windValue, C.white)
   else
     writeText(labelRow, 3, "> SOLAR", C.solar)
     writeText(labelRow, 10, solarValue, solarProducing and C.good or C.white)
