@@ -1,7 +1,17 @@
 -- SOLAR CORE | Animated information billboard
 -- CC:Tweaked / ATM10: To the Sky
 -- Computer 2: monitor connected, Ender Modem on top.
--- Clean centered composition: no window chrome or boxed panels.
+-- Black background, restrained industrial colors, no window chrome, no boxes.
+--
+-- The sphere animates ONLY when the sender reports honest solar production
+-- (msg.solarPowered, backed by msg.telemetry). Without real telemetry the
+-- core is dim/dormant and the status row explains exactly what is missing.
+-- Configured generator counts are shown as CONFIGURED, never as "producing".
+--
+-- Rendering is diff-based: a shadow buffer remembers every cell (char, fg, bg)
+-- and flush() writes only cells whose content changed. The sphere region is
+-- the only frequently-changing area, so redraw cost stays small and the
+-- display never flickers from full clears.
 
 local mon = peripheral.find("monitor")
 if not mon then error("No monitor found. Connect a monitor to this computer.") end
@@ -12,136 +22,352 @@ end
 rednet.open("top")
 mon.setTextScale(0.5)
 mon.setCursorBlink(false)
-mon.setBackgroundColor(colors.black)
 
 local W, H = mon.getSize()
-local lastSeen = 0
-local solar, wind = 4, 4
 
 local C = {
-  black = colors.black,
-  muted = colors.lightGray,
-  dim = colors.gray,
-  white = colors.white,
-  cyan = colors.cyan,
-  core = colors.lightBlue,
-  solar = colors.yellow,
-  wind = colors.lightBlue,
-  good = colors.lime,
-  warn = colors.orange
+  black    = colors.black,
+  muted    = colors.lightGray,
+  dim      = colors.gray,
+  white    = colors.white,
+  cyan     = colors.cyan,
+  blue     = colors.lightBlue,
+  deep     = colors.blue,
+  solar    = colors.yellow,
+  wind     = colors.lightBlue,
+  good     = colors.lime,
+  warn     = colors.orange,
+  dormant  = colors.gray,
 }
 
-local function put(x, y, text, fg, bg)
-  if y < 1 or y > H or x > W then return end
-  text = tostring(text)
-  if x < 1 then
-    text = string.sub(text, 2 - x)
-    x = 1
+local atan2 = math.atan2 or function(y, x) return math.atan(y / x) end
+
+-- ---------------------------------------------------------------------------
+-- Diff renderer
+-- ---------------------------------------------------------------------------
+
+local shadow = {}            -- cells we want on screen
+local live = {}              -- cells last flushed to the monitor
+
+local function setCell(x, y, ch, fg, bg)
+  if x < 1 or x > W or y < 1 or y > H then return end
+  shadow[(y - 1) * W + x] = { ch, fg or C.white, bg or C.black }
+end
+
+local function writeText(y, x, text, fg, bg)
+  for i = 1, #text do
+    setCell(x + i - 1, y, text:sub(i, i), fg, bg)
   end
-  local room = W - x + 1
-  if #text > room then text = string.sub(text, 1, room) end
-  if #text == 0 then return end
-  mon.setBackgroundColor(bg or C.black)
-  mon.setTextColor(fg or C.white)
-  mon.setCursorPos(x, y)
-  mon.write(text)
 end
 
-local function centeredAt(cx, y, text, fg)
-  text = tostring(text)
+local function center(y, text, fg, bg)
   if y < 1 or y > H then return end
-  if #text > W then text = string.sub(text, 1, W) end
-  put(math.floor(cx - (#text - 1) / 2), y, text, fg or C.white)
+  text = tostring(text)
+  if #text > W then text = text:sub(1, W) end
+  writeText(y, math.floor((W - #text) / 2) + 1, text, fg, bg)
 end
 
-local function centered(y, text, fg)
-  centeredAt((W + 1) / 2, y, text, fg)
-end
-
-local function accentBar(centerX, y, width, color)
-  width = math.min(width, W)
-  local startX = math.floor(centerX - (width - 1) / 2)
+local function accent(cx, y, width, color)
+  local startX = math.floor(cx - (width - 1) / 2)
   if startX < 1 then startX = 1 end
-  if startX + width - 1 > W then startX = W - width + 1 end
-  if startX < 1 or y < 1 or y > H then return end
-  mon.setBackgroundColor(color)
-  mon.setTextColor(color)
-  mon.setCursorPos(startX, y)
-  mon.write(string.rep(" ", width))
+  for i = 1, width do
+    setCell(startX + i - 1, y, " ", color, color)
+  end
 end
 
-local function statusIndicator(y, online, blink)
-  local text = online and "LINK ONLINE" or "LINK STANDBY"
-  local fg = online and C.good or C.warn
-  centered(y, text, fg)
-  local startX = math.floor((W - #text) / 2) + 1
-  local led = (online and blink) and C.white or fg
-  if startX > 2 then accentBar(startX - 2, y, 1, led) end
-  if startX + #text + 1 <= W then accentBar(startX + #text + 1, y, 1, led) end
+local function clearShadow()
+  for i = 1, W * H do
+    shadow[i] = { " ", C.white, C.black }
+  end
 end
 
-local coreFrames = {
-  "    .  *  .    ",
-  "    *  +  *    ",
-  "    .  +  .    ",
-  "    *  +  *    ",
-  "    .  *  .    ",
-  "    +  *  +    "
-}
+local function flush()
+  for y = 1, H do
+    for x = 1, W do
+      local i = (y - 1) * W + x
+      local s = shadow[i] or { " ", C.white, C.black }
+      local l = live[i]
+      if l == nil or l[1] ~= s[1] or l[2] ~= s[2] or l[3] ~= s[3] then
+        mon.setBackgroundColour(s[3])
+        mon.setTextColour(s[2])
+        mon.setCursorPos(x, y)
+        mon.write(s[1])
+        live[i] = { s[1], s[2], s[3] }
+      end
+    end
+  end
+end
 
-local function render()
-  local now = os.clock()
-  local online = lastSeen > 0 and (now - lastSeen) < 12
-  local age = online and string.format("%.1fs", math.max(0, now - lastSeen)) or nil
+-- ---------------------------------------------------------------------------
+-- Energy sphere
+-- A stylized holographic globe in characters: a rotating light side, a dark
+-- side, latitude shading and an orbiting highlight. All frames are precomputed
+-- once at the actual monitor size, so per-frame cost is a small blit.
+-- ---------------------------------------------------------------------------
+
+-- Glyph banks: index = brightness level, 1 = dimmest.
+local SHADE_ACTIVE = { " ", ".", ":", "+", "=", "*", "%", "#" }
+local SHADE_DORMANT = { " ", ":", ".", "=" }
+
+local SPHERE_PHASES = 24
+local sphereRows, sphereCols
+local sphereFrames     -- [phase][row][col] = { char, color }
+local dormantFrame     -- [row][col] = { char, color }
+
+local function sphereDims(rows)
+  local cols = math.max(15, math.floor(rows * 2.1))
+  if cols % 2 == 0 then cols = cols + 1 end
+  return rows, cols
+end
+
+local function buildFrames(rows)
+  sphereRows, sphereCols = sphereDims(rows)
+  local cx = (sphereCols + 1) / 2
+  local cy = (sphereRows + 1) / 2
+  local maxR = sphereRows / 2
+
+  sphereFrames = {}
+  for phase = 0, SPHERE_PHASES - 1 do
+    local theta = (phase / SPHERE_PHASES) * math.pi * 2
+    local f = {}
+    for row = 1, sphereRows do
+      local line = {}
+      local dy = row - cy
+      local halfW = math.sqrt(math.max(0, maxR * maxR - dy * dy)) * 2
+      for col = 1, sphereCols do
+        line[col] = { " ", C.black }
+        local dx = (col - cx) / 2
+        if math.abs(dx) <= halfW then
+          local dz = math.sqrt(math.max(0, halfW * halfW - dx * dx)) / 2
+          -- rotate the surface point around the vertical axis; cos of the
+          -- angle to the light gives the terminator sweep
+          local lightness = (math.cos(atan2(dz, dx) + theta) + 1) / 2
+          lightness = lightness * (1 - (math.abs(dy) / maxR) * 0.35)
+          local level = math.floor(lightness * (#SHADE_ACTIVE - 1)) + 1
+          -- In-sphere cells are never blank: the shadow side keeps visible
+          -- volume, so the silhouette always reads as a sphere.
+          if level < 2 then level = 2 end
+          local fg = (level <= 3) and C.deep or C.blue
+          line[col] = { SHADE_ACTIVE[level], fg }
+        end
+      end
+      f[row] = line
+    end
+
+    -- highlight: a small hot spot orbiting the upper hemisphere
+    local ha = theta - math.pi / 3
+    local hr = maxR * 0.55
+    local hx = math.floor(cx + math.sin(ha) * hr * 2)
+    local hy = math.floor(cy - math.cos(ha) * hr)
+    if f[hy] and hx >= 1 and hx <= sphereCols and f[hy][hx][1] ~= " " then
+      f[hy][hx] = { "@", C.white }
+      if f[hy + 1] and f[hy + 1][hx] and f[hy + 1][hx][1] ~= " " then
+        f[hy + 1][hx] = { "%", C.white }
+      end
+    end
+    sphereFrames[phase] = f
+  end
+
+  -- Dormant: same silhouette, lit statically from above, dim gray.
+  dormantFrame = {}
+  for row = 1, sphereRows do
+    local line = {}
+    local dy = row - cy
+    local halfW = math.sqrt(math.max(0, maxR * maxR - dy * dy)) * 2
+    for col = 1, sphereCols do
+      line[col] = { " ", C.black }
+      local dx = (col - cx) / 2
+      if math.abs(dx) <= halfW then
+        local dz = math.sqrt(math.max(0, halfW * halfW - dx * dx)) / 2
+        local lightness = (dz / maxR) * (1 - (math.abs(dy) / maxR) * 0.35)
+        local level = math.floor(lightness * (#SHADE_DORMANT - 1)) + 1
+        -- Shadow side stays visible here too, for the same reason.
+        if level < 2 then level = 2 end
+        line[col] = { SHADE_DORMANT[level], C.dormant }
+      end
+    end
+    dormantFrame[row] = line
+  end
+  -- small static highlight, upper left
+  local hx = math.floor(sphereCols * 0.38)
+  local hy = math.max(2, math.floor(sphereRows * 0.28))
+  if dormantFrame[hy][hx][1] ~= " " then
+    dormantFrame[hy][hx] = { "*", C.muted }
+  end
+end
+
+local function drawSphere(topY, x0, frame)
+  for r = 1, sphereRows do
+    local line = frame[r]
+    for col = 1, sphereCols do
+      setCell(x0 + col - 1, topY + r - 1, line[col][1], line[col][2], C.black)
+    end
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Layout
+-- ---------------------------------------------------------------------------
+
+-- Vertical budget.
+-- Full walls (H >= 13):
+--   rows 2..4: header + subtitle + accent
+--   rows 5..(4+SR): sphere  (SR = H - 10, clamped 5..12)
+--   +1: label row (solar left, wind right)
+--   +1: value row (aligned under labels)
+--   +1 blank, then link row and detail row
+--   last row: footer
+-- Compact terminals (H < 13): drop the subtitle accent rows and squeeze
+-- sections together instead of letting the sphere eat the readouts.
+local compact = H < 13
+local sphereTop, SR, labelRow, valueRow, linkY, detailY
+if compact then
+  sphereTop = 3
+  SR = math.max(3, math.min(5, H - 7))
+  labelRow = sphereTop + SR
+  valueRow = labelRow + 1
+  linkY = valueRow + 1
+  detailY = linkY + 1
+else
+  sphereTop = 5
+  SR = math.max(5, math.min(12, H - 10))
+  labelRow = sphereTop + SR
+  valueRow = labelRow + 1
+  linkY = valueRow + 2
+  detailY = linkY + 1
+end
+
+buildFrames(SR)
+
+-- ---------------------------------------------------------------------------
+-- Live state
+-- ---------------------------------------------------------------------------
+
+local lastSeen = 0
+local solar, wind = 0, 0
+local solarPowered = false
+local telemetry = nil
+local senderOutdated = false  -- message arrived without solarPowered field
+
+local function isOnline(now)
+  return lastSeen > 0 and (now - lastSeen) < 12
+end
+
+local function statusInfo(now)
+  if not isOnline(now) then
+    return "LINK STANDBY", C.warn
+  elseif senderOutdated then
+    return "LINK ONLINE  /  SOLAR UNKNOWN", C.warn
+  elseif telemetry then
+    if solarPowered then
+      return "LINK ONLINE  /  SOLAR PRODUCING", C.good
+    end
+    return "LINK ONLINE  /  SOLAR STANDBY", C.warn
+  end
+  return "LINK ONLINE  /  SOLAR UNKNOWN", C.warn
+end
+
+local function detailInfo(now)
+  if not isOnline(now) then
+    return "WIRELESS UPLINK  /  AWAITING SIGNAL", C.warn
+  elseif senderOutdated then
+    return "SENDER OUTDATED  /  UPDATE SOLAR-CORE-SENDER", C.warn
+  elseif telemetry then
+    return "WIRELESS UPLINK  /  SIGNAL: " .. tostring(telemetry), C.muted
+  end
+  return "NO POWER TELEMETRY  /  ADD AN ENERGY DETECTOR TO THE SENDER", C.warn
+end
+
+-- ---------------------------------------------------------------------------
+-- Render
+-- ---------------------------------------------------------------------------
+
+local function render(now)
   local blink = math.floor(now * 2) % 2 == 0
+  clearShadow()
 
-  mon.setBackgroundColor(C.black)
-  mon.setTextColor(C.white)
-  mon.clear()
+  -- Header
+  if compact then
+    center(1, "SOLAR CORE", C.cyan)
+  else
+    center(2, "SOLAR CORE", C.cyan)
+    center(3, "POWER NETWORK  /  ATM10 : TO THE SKY", C.muted)
+    accent((W + 1) / 2, 4, math.min(7, W), C.cyan)
+  end
 
-  -- Header: centered identity with a small, solid-color accent.
-  centered(2, "SOLAR CORE", C.cyan)
-  centered(3, "POWER NETWORK  /  ATM10 : TO THE SKY", C.muted)
-  accentBar((W + 1) / 2, 4, math.min(7, W), C.cyan)
+  -- Hero sphere, centered
+  local frame, cols
+  if solarPowered and isOnline(now) then
+    frame = sphereFrames[math.floor(now * 8) % SPHERE_PHASES]
+    cols = sphereCols
+  else
+    frame = dormantFrame
+    cols = sphereCols
+  end
+  drawSphere(sphereTop, math.floor((W - cols) / 2) + 1, frame)
 
-  -- Keep the original animated core as the visual focal point.
-  local coreY = math.max(5, math.floor(H * 0.28))
-  centered(coreY, coreFrames[(math.floor(now * 2.5) % #coreFrames) + 1],
-    blink and C.cyan or C.core)
-  centered(coreY + 1, online and "ENERGY MATRIX / SYNCHRONIZED" or "ENERGY MATRIX / STANDBY",
-    online and C.good or C.muted)
+  -- Fleet readouts: left solar, right wind, aligned columns.
+  -- Wide walls: side-by-side blocks. Narrow terminals: stacked rows.
+  local solarProducing = solarPowered and isOnline(now)
+  local solarValue = string.format("%02d %s", solar,
+    solarProducing and "PRODUCING" or "CONFIGURED")
+  local windValue = string.format("%02d CONFIGURED", wind)
 
-  -- Symmetrical generator readouts with matching label/value/accent positions.
-  local fleetY = math.max(coreY + 3, math.floor(H * 0.49))
-  centered(fleetY, "GENERATION FLEET", C.muted)
+  if W >= 37 then
+    local leftX = 3
+    local rightX = W - 15          -- label "> WIND TURBINES" ends exactly at W-1
+    writeText(labelRow, leftX, "> SOLAR ARRAYS", C.solar)
+    writeText(labelRow, rightX, "> WIND TURBINES", C.wind)
+    writeText(valueRow, leftX + 4, solarValue,
+      solarProducing and C.good or C.white)
+    writeText(valueRow, rightX + 2, windValue, C.white)
+  else
+    writeText(labelRow, 3, "> SOLAR", C.solar)
+    writeText(labelRow, 10, solarValue, solarProducing and C.good or C.white)
+    writeText(valueRow, 3, "> WIND", C.wind)
+    writeText(valueRow, 10, windValue, C.white)
+  end
 
-  local leftCenter = math.floor(W * 0.28)
-  local rightCenter = math.floor(W * 0.72)
+  -- Link status with subtle blinking side markers
+  local status, statusColor = statusInfo(now)
+  center(linkY, status, statusColor)
+  local sx = math.floor((W - #status) / 2) + 1
+  local led = (isOnline(now) and blink) and C.white or statusColor
+  if sx > 2 then setCell(sx - 2, linkY, " ", led, led) end
+  if sx + #status + 1 <= W then setCell(sx + #status + 1, linkY, " ", led, led) end
 
-  centeredAt(leftCenter, fleetY + 1, "SOLAR ARRAYS", C.solar)
-  centeredAt(leftCenter, fleetY + 2, string.format("%02d CONFIGURED", solar), C.white)
-  accentBar(leftCenter, fleetY + 3, math.min(9, W), C.solar)
+  local detail, detailColor = detailInfo(now)
+  if detailY and detailY <= H - 1 then
+    center(detailY, detail, detailColor)
+  end
 
-  centeredAt(rightCenter, fleetY + 1, "WIND TURBINES", C.wind)
-  centeredAt(rightCenter, fleetY + 2, string.format("%02d CONFIGURED", wind), C.white)
-  accentBar(rightCenter, fleetY + 3, math.min(9, W), C.wind)
+  -- Footer
+  center(H, "ATM10  /  TO THE SKY", C.dim)
 
-  -- Informational wireless status, not a button or window element.
-  local linkY = math.min(H - 4, math.max(fleetY + 5, math.floor(H * 0.75)))
-  statusIndicator(linkY, online, blink)
-  local detail = online and ("WIRELESS UPLINK  /  LAST RX " .. age)
-    or "WIRELESS UPLINK  /  AWAITING SIGNAL"
-  centered(linkY + 1, detail, online and C.muted or C.warn)
-
-  centered(H - 1, "ATM10  /  TO THE SKY", C.dim)
+  flush()
 end
+
+-- ---------------------------------------------------------------------------
+-- Main loop
+-- ---------------------------------------------------------------------------
+
+mon.setBackgroundColour(colors.black)
+mon.setTextColour(colors.white)
+mon.clear()
 
 while true do
   local id, msg = rednet.receive("SOLARCORE", 0.15)
+  local now = os.clock()
+
   if id and type(msg) == "table" then
-    lastSeen = os.clock()
+    lastSeen = now
     solar = tonumber(msg.solar) or solar
     wind = tonumber(msg.wind) or wind
+    senderOutdated = (msg.solarPowered == nil)
+    -- Honest state only: the flag must come from the sender's real probes.
+    solarPowered = msg.solarPowered == true
+    telemetry = msg.telemetry
   end
-  render()
+
+  render(now)
 end
