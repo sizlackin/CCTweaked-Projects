@@ -138,7 +138,7 @@ local function drawFrame()
     pw2 = interiorW - gap - pw1
     px1, px2, py, ph = 2, 2 + pw1 + gap, 3, H - 6
     panel(px1, py, pw1, ph, C.cyan, "CORE TELEMETRY")
-    panel(px2, py, pw2, ph, C.wind, "GENERATION FLEET")
+    panel(px2, py, pw2, ph, C.wind, "GENERATOR FLEET")
 
     -- Toolbar-like status and footer areas.
     fill(2, H - 3, W - 2, 1, C.border)
@@ -186,7 +186,7 @@ local function drawFull(now, online, blink)
   local coreY = py + 2
   rowClear(ix, coreY, iw)
   centered(ix, coreY, iw, coreFrames[(math.floor(now * 3) % #coreFrames) + 1],
-    blink and C.cyan or C.lightBlue)
+    blink and C.cyan or C.wind)
   rowClear(ix, py + 3, iw)
   centered(ix, py + 3, iw, "ENERGY MATRIX", C.muted)
   drawLinkChip(ix + 1, py + 4, iw - 2, online, blink)
@@ -254,7 +254,7 @@ local function drawCompact(now, online, blink)
   local bottomInside = py + ph - 2
   rowClear(ix, contentTop, iw)
   centered(ix, contentTop, iw, coreFrames[(math.floor(now * 3) % #coreFrames) + 1],
-    blink and C.cyan or C.lightBlue)
+    blink and C.cyan or C.wind)
   if contentTop + 1 <= bottomInside then
     rowClear(ix, contentTop + 1, iw)
     centered(ix, contentTop + 1, iw,
