@@ -8,10 +8,13 @@
 --   telemetry =     which peripheral the state came from (nil = none available)
 --
 -- Power-state detection, in priority order:
---   1. Advanced Peripherals "energyDetector" wired through the solar output.
+--   1. Advanced Peripherals "Energy Detector" wired through the solar output.
 --      getTransferRate() is real flow (FE/t); > 0 means genuine production.
 --      This is the recommended setup: route ONLY the solar cable run through
 --      the Energy Detector so wind output never crosses it.
+--      NOTE: the peripheral name changed on Minecraft 1.21.1+; before that it
+--      is "energyDetector", from 1.21.1 it is "energy_detector". Both are
+--      probed below so the pack version does not matter.
 --   2. Any peripheral exposing a direct production flag such as
 --      isProducing() (mod-dependent; probed generically below).
 --   3. NOTHING. The configured count is NOT a substitute: solarPowered is
@@ -62,9 +65,15 @@ local function probeDirectFlag(name, method)
 end
 
 local function probeEnergyDetector()
-  local detector = peripheral.find("energyDetector", function(_, p)
-    return type(p.getTransferRate) == "function" or nil
-  end)
+  -- Peripheral name differs across Minecraft versions: 1.21.1+ uses
+  -- "energy_detector", older packs use "energyDetector". Try both.
+  local detector = nil
+  for _, name in ipairs({ "energy_detector", "energyDetector" }) do
+    detector = peripheral.find(name, function(_, p)
+      return type(p.getTransferRate) == "function" or nil
+    end)
+    if detector then break end
+  end
   if not detector then return false end
   local ok, rate = pcall(detector.getTransferRate, detector)
   if not ok or type(rate) ~= "number" then return false end
