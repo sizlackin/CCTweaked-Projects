@@ -125,11 +125,15 @@ local function drawFrame()
   fill(W, 2, 1, H - 2, C.border)
 
   put(3, 1, "SOLAR CORE", C.text, C.title)
-  local rightTitle = "ENERGY TELEMETRY"
-  put(W - #rightTitle - 2, 1, rightTitle, C.text, C.title)
+  local rightTitle = W >= 38 and "ENERGY TELEMETRY" or (W >= 34 and "INFO BOARD" or "")
+  if #rightTitle > 0 then
+    put(W - #rightTitle - 2, 1, rightTitle, C.text, C.title)
+  end
   put(3, 2, "GRID OPERATIONS", C.cyan)
-  local subtitle = "ATM10 / TO THE SKY"
-  put(W - #subtitle - 2, 2, subtitle, C.muted)
+  if W >= 38 then
+    local subtitle = "ATM10 / TO THE SKY"
+    put(W - #subtitle - 2, 2, subtitle, C.muted)
+  end
 
   if full then
     local interiorW = W - 2
