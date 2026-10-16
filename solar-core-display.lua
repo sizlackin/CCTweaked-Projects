@@ -113,7 +113,7 @@ local function signalMeter(x, y, width, accent, phase)
   end
 end
 
-local full = W >= 38 and H >= 16
+local full = W >= 38 and H >= 19
 local px1, px2, pw1, pw2, py, ph
 
 local function drawFrame()
@@ -148,7 +148,8 @@ local function drawFrame()
     fill(2, H - 3, W - 2, 1, C.border)
     fill(2, H - 2, W - 2, 1, C.black)
     fill(2, H - 1, W - 2, 1, C.border)
-    put(3, H - 1, "AUTOMATION / INFORMATION DISPLAY", C.text, C.border)
+    local footerLeft = W >= 48 and "AUTOMATION / INFORMATION DISPLAY" or "INDUSTRIAL TELEMETRY"
+    put(3, H - 1, footerLeft, C.text, C.border)
     local footerRight = "ATM10 / SKY"
     put(W - #footerRight - 2, H - 1, footerRight, C.text, C.border)
   else
@@ -187,51 +188,51 @@ local function drawFull(now, online, blink)
 
   -- Left instrument panel: animated core, link state, and signal scanner.
   local ix, iw = px1 + 1, pw1 - 2
-  local coreY = py + 2
+  local coreY = py + 3
   rowClear(ix, coreY, iw)
   centered(ix, coreY, iw, coreFrames[(math.floor(now * 3) % #coreFrames) + 1],
     blink and C.cyan or C.wind)
-  rowClear(ix, py + 3, iw)
-  centered(ix, py + 3, iw, "ENERGY MATRIX", C.muted)
-  drawLinkChip(ix + 1, py + 4, iw - 2, online, blink)
-  rowClear(ix, py + 5, iw)
-  signalMeter(ix + 1, py + 5, iw - 2, online and C.good or C.cyan,
-    (math.floor(now * 4) % 5) + 1)
-  rowClear(ix, py + 6, iw)
-  centered(ix, py + 6, iw, online and ("LAST RX  " .. age) or "NO TELEMETRY",
-    online and C.good or C.warn)
-  rowClear(ix, py + 7, iw)
-  centered(ix, py + 7, iw, "NODE ID  SC-02", C.cyan)
+  rowClear(ix, py + 4, iw)
+  centered(ix, py + 4, iw, "ENERGY MATRIX", C.muted)
+  drawLinkChip(ix + 1, py + 6, iw - 2, online, blink)
   rowClear(ix, py + 8, iw)
-  centered(ix, py + 8, iw, "REDNET UPLINK", C.border)
+  signalMeter(ix + 1, py + 8, iw - 2, online and C.good or C.cyan,
+    (math.floor(now * 4) % 5) + 1)
+  rowClear(ix, py + 10, iw)
+  centered(ix, py + 10, iw, online and ("LAST RX  " .. age) or "NO TELEMETRY",
+    online and C.good or C.warn)
+  rowClear(ix, py + 11, iw)
+  centered(ix, py + 11, iw, "NODE ID  SC-02", C.cyan)
+  rowClear(ix, py + 12, iw)
+  centered(ix, py + 12, iw, "REDNET UPLINK", C.border)
 
   -- Right panel: clear, color-coded configured-unit counts.
   local gx, gw = px2 + 1, pw2 - 2
-  splitRow(gx, py + 2, gw, "SOLAR ARRAYS",
+  splitRow(gx, py + 3, gw, "SOLAR ARRAYS",
     string.format("%02d", solar), C.solar, C.solar)
-  rowClear(gx, py + 3, gw)
-  centered(gx, py + 3, gw, "CONFIGURED NODES", C.muted)
-  fill(gx, py + 4, gw, 1, C.black)
+  rowClear(gx, py + 4, gw)
+  centered(gx, py + 4, gw, "CONFIGURED NODES", C.muted)
+  fill(gx, py + 5, gw, 1, C.black)
   -- Unit blocks are setup counts, not live generation or health readings.
   local maxCount, slotW, gap = 4, 2, 1
   local total = maxCount * slotW + (maxCount - 1) * gap
   local startX = gx + math.max(0, math.floor((gw - total) / 2))
   for i = 1, maxCount do
-    fill(startX + (i - 1) * (slotW + gap), py + 4, slotW, 1,
+    fill(startX + (i - 1) * (slotW + gap), py + 5, slotW, 1,
       i <= math.min(solar, maxCount) and C.solar or C.empty)
   end
-  splitRow(gx, py + 5, gw, "WIND UNITS",
+  splitRow(gx, py + 7, gw, "WIND UNITS",
     string.format("%02d", wind), C.wind, C.wind)
-  rowClear(gx, py + 6, gw)
-  centered(gx, py + 6, gw, "CONFIGURED NODES", C.muted)
-  fill(gx, py + 7, gw, 1, C.black)
+  rowClear(gx, py + 8, gw)
+  centered(gx, py + 8, gw, "CONFIGURED NODES", C.muted)
+  fill(gx, py + 9, gw, 1, C.black)
   startX = gx + math.max(0, math.floor((gw - total) / 2))
   for i = 1, maxCount do
-    fill(startX + (i - 1) * (slotW + gap), py + 7, slotW, 1,
+    fill(startX + (i - 1) * (slotW + gap), py + 9, slotW, 1,
       i <= math.min(wind, maxCount) and C.wind or C.empty)
   end
-  rowClear(gx, py + 8, gw)
-  centered(gx, py + 8, gw, "CONFIGURED ONLY", C.border)
+  rowClear(gx, py + 11, gw)
+  centered(gx, py + 11, gw, "CONFIGURED ONLY", C.border)
 
   -- Status toolbar uses a blinking marker like an industrial annunciator.
   local statusY = H - 3
