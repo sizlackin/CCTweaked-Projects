@@ -104,6 +104,7 @@ end
 
 local function signalMeter(x, y, width, accent, phase)
   local segments = math.max(3, math.min(7, math.floor((width - 6) / 2)))
+  phase = ((phase - 1) % segments) + 1
   put(x, y, "SIGNAL", C.muted)
   local startX = x + 7
   for i = 1, segments do
@@ -113,7 +114,7 @@ local function signalMeter(x, y, width, accent, phase)
   end
 end
 
-local full = W >= 38 and H >= 19
+local full = W >= 38 and H >= 20
 local px1, px2, pw1, pw2, py, ph
 
 local function drawFrame()
