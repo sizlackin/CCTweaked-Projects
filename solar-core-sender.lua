@@ -1,28 +1,25 @@
--- SOLAR CORE wireless sender for CC:Tweaked / ATM10
+-- SOLAR CORE wireless sender for CC:Tweaked (ATM10: To the Sky)
 -- Computer 1: Ender Modem on bottom.
 --
--- Sends honest telemetry on the existing SOLARCORE protocol:
---   solar =         configured solar array count (NOT proof of production)
---   wind =          configured wind turbine count (NOT proof of production)
---   solarPowered =  true/false: does solar GENUINELY produce right now?
---   telemetry =     which peripheral the state came from (nil = none available)
+-- Message (SOLARCORE protocol, unchanged):
+--   solar, wind          configured counts (informational only)
+--   solarPowered         solar genuinely receiving energy right now?
+--   windPowered          wind genuinely receiving energy right now?
+--   telemetry            how solarPowered was measured (nil = no signal)
+--   telemetryWind        how windPowered was measured (nil = no signal)
 --
--- Power-state detection, in priority order:
---   1. Advanced Peripherals "Energy Detector" wired through the solar output.
---      getTransferRate() is real flow (FE/t); > 0 means genuine production.
---      This is the recommended setup: route ONLY the solar cable run through
---      the Energy Detector so wind output never crosses it.
---      NOTE: the peripheral name changed on Minecraft 1.21.1+; before that it
---      is "energyDetector", from 1.21.1 it is "energy_detector". Both are
---      probed below so the pack version does not matter.
---   2. Any peripheral exposing a direct production flag such as
---      isProducing() (mod-dependent; probed generically below).
---   3. NOTHING. The configured count is NOT a substitute: solarPowered is
---      sent as false and telemetry as nil, and the billboard shows the
---      dormant core while telling the user exactly what it is waiting for.
+-- Detection priority for solarPowered (wind identical, own cube):
+--   1. Inline flow meter on the solar-only cable run, if the pack has one
+--      (Advanced Peripherals "energy_detector"/"energyDetector").
+--   2. A direct production flag (isProducing) on any wrapped peripheral.
+--   3. A DEDICATED energy cube that only the solar arrays feed:
+--      a per-tick input method if the cube exposes one, otherwise the
+--      level rising between polls. Level must RISE to count as producing
+--      because a shared/discharging buffer cannot prove production.
+--   4. NOTHING. Counts are never used as proof.
 --
--- Safety note: if wind output shares the cable run through the Energy
--- Detector, its flow will read as solar. Dedicate the detector to solar.
+-- This file is per-source: the solar cube may fill while the wind cube
+-- drains; each source is measured on its own device only.
 
 if not peripheral.isPresent("bottom")
     or peripheral.getType("bottom") ~= "modem" then
@@ -30,46 +27,130 @@ if not peripheral.isPresent("bottom")
 end
 rednet.open("bottom")
 
--- Configured fleet (informational readouts on the billboard)
+-- ============================ CONFIG =====================================
 local SOLAR_COUNT = 4
-local WIND_COUNT = 4
+local WIND_COUNT  = 4
+local POLL        = 1.0     -- seconds between broadcasts
 
--- Seconds between broadcasts
-local POLL = 1.0
+-- Peripheral names (from peripheral.getNames()) of the cubes dedicated to
+-- each source. Leave nil to auto-detect: auto-detection only trusts itself
+-- when exactly ONE energy-reading peripheral is visible; with two or more
+-- visible the sender prints their names at startup and waits for you to
+-- set these two values.
+local SOLAR_CUBE_NAME = nil
+local WIND_CUBE_NAME  = nil
+-- =========================================================================
 
--- Set to true ONLY if a connected energyStorage-style peripheral meters a
--- buffer fed exclusively by solar (no wind, machines or battery discharge
--- can fool a shared buffer; that is why this is opt-in).
-local SOLAR_ONLY_GRID = false
+local LEVEL_METHODS = {
+  "getEnergy", "getEnergyStored", "getStoredEnergy",
+  "getEnergyLevel", "getStored",
+}
+local CAP_METHODS = {
+  "getMaxEnergy", "getEnergyCapacity", "getMaxEnergyStored",
+  "getCapacity", "getMaxStored",
+}
+local RATE_IN_METHODS = {
+  "getInputPerTick", "getInputRate", "getEnergyInput", "getRateIn",
+}
 
 -- ---------------------------------------------------------------------------
--- Honest detection
+-- Device discovery
 -- ---------------------------------------------------------------------------
 
--- Each probe returns (answered, producing, label). "answered" must only be
--- true when a real peripheral returned a real reading, so the display never
--- animates on an invented signal.
+local function methodOf(dev, list)
+  for _, m in ipairs(list) do
+    if type(dev[m]) == "function" then return m end
+  end
+  return nil
+end
 
-local function probeDirectFlag(name, method)
+local function scanEnergyDevices()
+  local found = {}
+  local ok, names = pcall(peripheral.getNames)
+  if not ok or type(names) ~= "table" then return found end
+  for _, name in ipairs(names) do
+    local okW, dev = pcall(peripheral.wrap, name)
+    if okW and type(dev) == "table" then
+      local getLevel = methodOf(dev, LEVEL_METHODS)
+      if getLevel then
+        found[#found + 1] = {
+          name = name,
+          dev = dev,
+          getLevel = getLevel,
+          getCap = methodOf(dev, CAP_METHODS),
+          getRateIn = methodOf(dev, RATE_IN_METHODS),
+        }
+      end
+    end
+  end
+  return found
+end
+
+local function resolveCube(configuredName, purpose, candidates)
+  if configuredName then
+    local ok, dev = pcall(peripheral.wrap, configuredName)
+    if ok and type(dev) == "table" then
+      local getLevel = methodOf(dev, LEVEL_METHODS)
+      if getLevel then
+        return { name = configuredName, dev = dev,
+          getLevel = getLevel, getCap = methodOf(dev, CAP_METHODS),
+          getRateIn = methodOf(dev, RATE_IN_METHODS) }
+      end
+    end
+    print("SOLAR CORE: " .. configuredName .. " is not an energy-reader; " ..
+      purpose .. " telemetry unavailable")
+    return nil
+  end
+  if #candidates == 1 then
+    return candidates[1]
+  end
+  return nil
+end
+
+-- Startup information and honest auto-detect limits
+local candidates = scanEnergyDevices()
+if #candidates == 0 then
+  print("SOLAR CORE: no energy-reading peripherals visible on the network.")
+  print("  (Mekanism machines do not speak to CC:Tweaked by themselves.)")
+elseif #candidates == 1 then
+  print("SOLAR CORE: using '" .. candidates[1].name .. "' for solar telemetry.")
+  print("  If that cube is WIND-fed, set SOLAR_CUBE_NAME/WIND_CUBE_NAME below.")
+else
+  print("SOLAR CORE: multiple energy peripherals visible:")
+  for _, c in ipairs(candidates) do
+    print("  " .. c.name .. "  level:" .. c.getLevel ..
+      (c.getCap and ("  cap:" .. c.getCap) or "") ..
+      (c.getRateIn and ("  rateIn:" .. c.getRateIn) or ""))
+  end
+  print("  Set SOLAR_CUBE_NAME and WIND_CUBE_NAME in this file, then re-wget/run.")
+end
+
+local solarCube = resolveCube(SOLAR_CUBE_NAME, "solar", candidates)
+local windCube = resolveCube(WIND_CUBE_NAME, "wind",
+  (SOLAR_CUBE_NAME == nil and solarCube ~= nil) and {} or candidates)
+
+-- ---------------------------------------------------------------------------
+-- Probes: each returns (answered, producing, label)
+-- ---------------------------------------------------------------------------
+
+local function probeDirectFlag(name, methodName)
   return function()
     local found = peripheral.find(name, function(_, p)
-      return type(p[method]) == "function" or nil
+      return type(p[methodName]) == "function" or nil
     end)
     if not found then return false end
-    local ok, val = pcall(found[method], found)
+    local ok, val = pcall(found[methodName], found)
     if ok and type(val) == "boolean" then
-      return true, val, name .. "." .. method
+      return true, val, name .. "." .. methodName
     end
     return false
   end
 end
 
-local function probeEnergyDetector()
-  -- Peripheral name differs across Minecraft versions: 1.21.1+ uses
-  -- "energy_detector", older packs use "energyDetector". Try both.
+local function probeFlowMeter()
   local detector = nil
-  for _, name in ipairs({ "energy_detector", "energyDetector" }) do
-    detector = peripheral.find(name, function(_, p)
+  for _, pname in ipairs({ "energy_detector", "energyDetector" }) do
+    detector = peripheral.find(pname, function(_, p)
       return type(p.getTransferRate) == "function" or nil
     end)
     if detector then break end
@@ -78,38 +159,81 @@ local function probeEnergyDetector()
   local ok, rate = pcall(detector.getTransferRate, detector)
   if not ok or type(rate) ~= "number" then return false end
   return true, rate > 0,
-    "energyDetector=" .. tostring(math.floor(rate + 0.5)) .. "FE/t"
+    "flow=" .. tostring(math.floor(rate + 0.5)) .. "FE/t"
 end
 
--- Opt-in weak signal; answers only when SOLAR_ONLY_GRID is set, because a
--- shared buffer cannot distinguish solar from wind or battery discharge.
-local function probeEnergyStorage()
-  if not SOLAR_ONLY_GRID then return false end
-  local storage = peripheral.find("energyStorage", function(_, p)
-    return type(p.getEnergyPerTick) == "function" or nil
-  end)
-  if not storage then return false end
-  local ok, rate = pcall(storage.getEnergyPerTick, storage)
-  if not ok or type(rate) ~= "number" then return false end
-  return true, rate > 0, "energyStorage=" .. tostring(math.floor(rate + 0.5)) .. "FE/t"
+-- Cube probes -------------------------------------------------------------
+
+local function callMethod(cube, method)
+  local ok, val = pcall(cube.dev[method], cube.dev)
+  if ok and type(val) == "number" then return val end
+  return nil
 end
 
-local probes = {
-  probeDirectFlag("solarPanel", "isProducing"),
-  probeDirectFlag("solar_panel", "isProducing"),
-  probeEnergyDetector,
-  probeEnergyStorage,
-}
+local function cubeRateIn(cube)
+  if not cube or not cube.getRateIn then return false end
+  local rate = callMethod(cube, cube.getRateIn)
+  if rate == nil then return false end
+  return true, rate > 0,
+    "cube:" .. cube.name .. "=" .. math.floor(rate + 0.5) .. "/t-in"
+end
 
-local function detectSolar()
-  for _, probe in ipairs(probes) do
-    local ok, answered, producing, label = pcall(probe)
-    if ok and answered then
-      return producing == true, label
-    end
-    -- probe errored or answered nothing: fall through to the next signal
+local cubeStates = {}
+
+local function cubeDelta(cube, key)
+  if not cube then return false end
+  local state = cubeStates[key] or { prev = nil }
+  cubeStates[key] = state
+
+  local level = callMethod(cube, cube.getLevel)
+  if level == nil then return false end
+
+  if state.prev == nil then
+    state.prev = level
+    return true, false, "cube:" .. cube.name .. "=wait"
   end
-  return false, nil
+
+  local delta = level - state.prev
+  state.prev = level
+
+  local cap = cube.getCap and callMethod(cube, cube.getCap) or nil
+  local nearFull = cap ~= nil and (cap - level) <= math.max(1, cap * 0.001)
+
+  if delta > 0 then
+    return true, true, "cube:" .. cube.name .. "=+" .. math.floor(delta)
+  elseif delta < 0 then
+    return true, false,
+      "cube:" .. cube.name .. "=" .. math.floor(delta)
+  elseif nearFull then
+    -- Full and static: production may be blocked by nowhere to put RF.
+    -- Conservative and honest: report standby, note the ambiguity.
+    return true, false, "cube:" .. cube.name .. "=full?"
+  else
+    return true, false, "cube:" .. cube.name .. "=+0"
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Per-source detection: flow meter > direct flag > cube rate-in > cube delta
+-- ---------------------------------------------------------------------------
+
+local function detectSource(key)
+  local okF, answered, producing, label = pcall(probeFlowMeter)
+  if okF and answered then return producing == true, label, "flow meter" end
+
+  for _, name in ipairs({ "solarPanel", "solar_panel" }) do
+    local okD, a2, p2, l2 = pcall(probeDirectFlag(name, "isProducing"))
+    if okD and a2 then return p2 == true, l2, "flag" end
+  end
+
+  local cube = (key == "solar") and solarCube or windCube
+  local okR, a3, p3, l3 = pcall(cubeRateIn, cube)
+  if okR and a3 then return p3 == true, l3, "cube input" end
+
+  local okL, a4, p4, l4 = pcall(cubeDelta, cube, key)
+  if okL and a4 then return p4 == true, l4, "cube level" end
+
+  return false, nil, nil
 end
 
 -- ---------------------------------------------------------------------------
@@ -117,12 +241,16 @@ end
 -- ---------------------------------------------------------------------------
 
 while true do
-  local powered, via = detectSolar()
+  local solarPowered, via = detectSource("solar")
+  local windPowered, viaWind = detectSource("wind")
+
   rednet.broadcast({
-    solar        = SOLAR_COUNT,     -- configured count, informational only
-    wind         = WIND_COUNT,
-    solarPowered = powered == true, -- honest flag; false without a real signal
-    telemetry    = via,             -- nil when nothing real was measurable
+    solar         = SOLAR_COUNT,
+    wind          = WIND_COUNT,
+    solarPowered  = solarPowered == true,
+    windPowered   = windPowered == true,
+    telemetry     = via,
+    telemetryWind = viaWind,
   }, "SOLARCORE")
   sleep(POLL)
 end
