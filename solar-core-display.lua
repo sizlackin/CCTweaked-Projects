@@ -113,7 +113,7 @@ local function signalMeter(x, y, width, accent, phase)
   end
 end
 
-local full = W >= 38 and H >= 14
+local full = W >= 38 and H >= 16
 local px1, px2, pw1, pw2, py, ph
 
 local function drawFrame()
@@ -159,7 +159,7 @@ end
 
 local function drawLinkChip(x, y, w, online, blink, label)
   fill(x, y, w, 1, C.black)
-  local text = label or (online and "LINK ONLINE" or "LINK STANDBY")
+  local text = label or (online and "ONLINE" or "STANDBY")
   local chipW = math.min(w, #text + 4)
   local chipX = x + math.max(0, math.floor((w - chipW) / 2))
   local bg = online and C.goodBg or C.warnDim
@@ -193,39 +193,41 @@ local function drawFull(now, online, blink)
   rowClear(ix, py + 5, iw)
   signalMeter(ix + 1, py + 5, iw - 2, online and C.good or C.cyan,
     (math.floor(now * 4) % 5) + 1)
-  splitRow(ix + 1, py + 6, iw - 2, "LAST PACKET", age, C.muted,
+  rowClear(ix, py + 6, iw)
+  centered(ix, py + 6, iw, online and ("LAST RX  " .. age) or "NO TELEMETRY",
     online and C.good or C.warn)
-  splitRow(ix + 1, py + 7, iw - 2, "DISPLAY NODE", "SC-02", C.muted, C.cyan)
+  rowClear(ix, py + 7, iw)
+  centered(ix, py + 7, iw, "NODE ID  SC-02", C.cyan)
   rowClear(ix, py + 8, iw)
-  centered(ix, py + 8, iw, "REDNET / SOLARCORE", C.border)
+  centered(ix, py + 8, iw, "REDNET UPLINK", C.border)
 
   -- Right panel: clear, color-coded configured-unit counts.
   local gx, gw = px2 + 1, pw2 - 2
-  splitRow(gx + 1, py + 2, gw - 2, "SOLAR ARRAYS",
+  splitRow(gx, py + 2, gw, "SOLAR ARRAYS",
     string.format("%02d", solar), C.solar, C.solar)
-  rowClear(gx + 1, py + 3, gw - 2)
-  centered(gx + 1, py + 3, gw - 2, "CONFIGURED NODES", C.muted)
-  fill(gx + 1, py + 4, gw - 2, 1, C.black)
+  rowClear(gx, py + 3, gw)
+  centered(gx, py + 3, gw, "CONFIGURED NODES", C.muted)
+  fill(gx, py + 4, gw, 1, C.black)
   -- Unit blocks are setup counts, not live generation or health readings.
   local maxCount, slotW, gap = 4, 2, 1
   local total = maxCount * slotW + (maxCount - 1) * gap
-  local startX = gx + 1 + math.max(0, math.floor((gw - 2 - total) / 2))
+  local startX = gx + math.max(0, math.floor((gw - total) / 2))
   for i = 1, maxCount do
     fill(startX + (i - 1) * (slotW + gap), py + 4, slotW, 1,
       i <= math.min(solar, maxCount) and C.solar or C.empty)
   end
-  splitRow(gx + 1, py + 5, gw - 2, "WIND TURBINES",
+  splitRow(gx, py + 5, gw, "WIND UNITS",
     string.format("%02d", wind), C.wind, C.wind)
-  rowClear(gx + 1, py + 6, gw - 2)
-  centered(gx + 1, py + 6, gw - 2, "CONFIGURED NODES", C.muted)
-  fill(gx + 1, py + 7, gw - 2, 1, C.black)
-  startX = gx + 1 + math.max(0, math.floor((gw - 2 - total) / 2))
+  rowClear(gx, py + 6, gw)
+  centered(gx, py + 6, gw, "CONFIGURED NODES", C.muted)
+  fill(gx, py + 7, gw, 1, C.black)
+  startX = gx + math.max(0, math.floor((gw - total) / 2))
   for i = 1, maxCount do
     fill(startX + (i - 1) * (slotW + gap), py + 7, slotW, 1,
       i <= math.min(wind, maxCount) and C.wind or C.empty)
   end
-  rowClear(gx + 1, py + 8, gw - 2)
-  centered(gx + 1, py + 8, gw - 2, "CONFIG COUNTS ONLY", C.border)
+  rowClear(gx, py + 8, gw)
+  centered(gx, py + 8, gw, "CONFIGURED ONLY", C.border)
 
   -- Status toolbar uses a blinking marker like an industrial annunciator.
   local statusY = H - 3
@@ -259,7 +261,8 @@ local function drawCompact(now, online, blink)
       string.format("SOLAR %02d   WIND %02d", solar, wind), C.solar)
   end
   if contentTop + 2 <= bottomInside then
-    drawLinkChip(ix + 1, contentTop + 2, iw - 2, online, blink)
+    drawLinkChip(ix + 1, contentTop + 2, iw - 2, online, blink,
+      online and "LINK ONLINE" or "LINK STANDBY")
   end
   if contentTop + 3 <= bottomInside then
     rowClear(ix, contentTop + 3, iw)
