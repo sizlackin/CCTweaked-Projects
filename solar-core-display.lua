@@ -42,22 +42,26 @@ if not width or not height or width < 32 or height < 32 then
   error("Tom's GPU canvas is too small. Connect Tom's monitor blocks to the GPU.")
 end
 
+-- Geometry/text primitives and packed ARGB colors use separate documented
+-- GPU conventions. Pixel primitives accept full ARGB; text's optional colors
+-- are parsed as signed Java ints, so keep text colors in the signed range.
 local COLOR = {
-  bg       = 0xFF070B12,
-  panel    = 0xFF0B121D,
-  white    = 0xFFD2E4F4,
-  muted    = 0xFF6C8BA8,
-  dim      = 0xFF24506F,
-  cyan     = 0xFF12D5E8,
-  solar    = 0xFFFFD735,
-  wind     = 0xFF24A9F2,
-  good     = 0xFF00E39A,
-  warn     = 0xFFFF762E,
-  core     = 0xFF3D83AE,
+  bgPixel = 0xFF070B12,
+  bgText  = 0xFF070B12 - 0x100000000,
+  white   = 0xFFD2E4F4 - 0x100000000,
+  muted   = 0xFF6C8BA8 - 0x100000000,
+  dim     = 0xFF24506F - 0x100000000,
+  cyan    = 0xFF12D5E8 - 0x100000000,
+  solar   = 0xFFFFD735 - 0x100000000,
+  wind    = 0xFF24A9F2 - 0x100000000,
+  good    = 0xFF00E39A - 0x100000000,
+  warn    = 0xFFFF762E - 0x100000000,
+  core    = 0xFF3D83AE - 0x100000000,
 }
 
--- Use the actual GPU font metrics to center and clip text safely. Tom's GPU
--- positions are one-based, and drawTextSmart accepts ARGB colors and a size.
+-- Tom's default ASCII font has measured 8px glyphs; getTextLength and drawText
+-- use the same per-glyph widths. drawTextSmart auto-doubles ASCII glyphs, so it
+-- cannot be used with those measurements for this layout.
 local function textWidth(text, size)
   return gpu.getTextLength(text, size, 1)
 end
@@ -75,7 +79,7 @@ local function drawText(text, x, y, color, size, align, maxWidth)
   elseif align == "right" then x = x - measured + 1 end
   x = math.max(1, math.min(width - measured + 1, math.floor(x)))
   y = math.max(1, math.min(height - 8 * size + 1, math.floor(y)))
-  gpu.drawTextSmart(x, y, text, color, COLOR.bg, false, size, 1)
+  gpu.drawText(x, y, text, color, COLOR.bgText, size, 1)
 end
 
 local function fillRect(x, y, w, h, color)
@@ -379,7 +383,7 @@ local function renderMicro(now)
 end
 
 local function render(now)
-  gpu.fill(COLOR.bg)
+  gpu.fill(COLOR.bgPixel)
   if width >= 240 and height >= 150 and width / height >= 1.3 then
     renderWide(now)
   elseif width >= 100 and height >= 100 then
