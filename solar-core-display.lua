@@ -187,8 +187,16 @@ local function updateMessage(id, msg, now)
   if solarValue ~= nil then solar, solarKnown = solarValue, true end
   if windValue ~= nil then wind, windKnown = windValue, true end
   senderOutdated = type(msg.solarPowered) ~= "boolean"
-  solarPowered = type(msg.solarPowered) == "boolean" and msg.solarPowered or nil
-  windPowered = type(msg.windPowered) == "boolean" and msg.windPowered or nil
+  if type(msg.solarPowered) == "boolean" then
+    solarPowered = msg.solarPowered
+  else
+    solarPowered = nil
+  end
+  if type(msg.windPowered) == "boolean" then
+    windPowered = msg.windPowered
+  else
+    windPowered = nil
+  end
   telemetry, telemetryWind = msg.telemetry, msg.telemetryWind
 end
 
@@ -201,7 +209,7 @@ local function drawGeneratorPanel(x, y, panelWidth, title, count, known, powered
   local productionLabel = shortLabels and "PROD" or "PRODUCTION"
   local outputLabel = shortLabels and "OUTPUT" or "TOTAL OUTPUT"
   local statusLabel = shortLabels and "STATE" or "STATUS"
-  local shortStates = { PRODUCING = "ACTIVE", CONFIGURED = "STANDBY", ["LINK LOST"] = "LOST" }
+  local shortStates = { PRODUCING = "ACTIVE", STANDBY = "IDLE", CONFIGURED = "IDLE", ["LINK LOST"] = "LOST" }
   local shownState = shortLabels and (shortStates[state] or state) or state
   local titleX = x + S(34)
   if icon == "sun" then
@@ -305,12 +313,12 @@ local function renderCompact(now)
   end
   local solarState, solarColor = powerState(now, solarPowered, telemetry)
   local windState, windColor = powerState(now, windPowered, telemetryWind)
+  local compactStates = { PRODUCING = "ON", STANDBY = "IDLE", CONFIGURED = "IDLE", ["LINK LOST"] = "LOST", UNKNOWN = "?" }
   local narrow = width < 100 or height < 100
   if narrow then
     local fs = 1
     centerText("SOLAR CORE", 3, COLOR.cyan, fs, width - 8)
     line(3, 13, width - 2, 13, COLOR.dim)
-    local compactStates = { PRODUCING = "ON", CONFIGURED = "IDLE", ["LINK LOST"] = "LOST", UNKNOWN = "?" }
     T("S " .. countText(solar, solarKnown) .. " " .. (compactStates[solarState] or solarState), 4, 18, solarColor, 1, nil, 100)
     T("W " .. countText(wind, windKnown) .. " " .. (compactStates[windState] or windState), 4, 29, windColor, 1, nil, 100)
     T("SYSTEM " .. (online(now) and "ONLINE" or "STANDBY"), 4, 40,
@@ -331,13 +339,13 @@ local function renderCompact(now)
   miniIcon(X(12), X(37), COLOR.solar, "sun")
   T("SOLAR ARRAYS", 23, 31, COLOR.solar, 1.3, nil, 150)
   T("GENERATORS  " .. countText(solar, solarKnown) .. " CONFIGURED", 6, 45, COLOR.white, 1, nil, 166)
-  T("PRODUCTION  " .. ((solarState == "PRODUCING") and "ACTIVE" or solarState), 6, 57, solarColor, 1, nil, 166)
+  T("PRODUCTION  " .. (compactStates[solarState] or solarState), 6, 57, solarColor, 1, nil, 166)
   L(5, 68, 175, 68, COLOR.dim)
 
   miniIcon(X(12), X(82), COLOR.wind, "wind")
   T("WIND TURBINES", 23, 76, COLOR.wind, 1.3, nil, 150)
   T("GENERATORS  " .. countText(wind, windKnown) .. " CONFIGURED", 6, 90, COLOR.white, 1, nil, 166)
-  T("PRODUCTION  " .. ((windState == "PRODUCING") and "ACTIVE" or windState), 6, 102, windColor, 1, nil, 166)
+  T("PRODUCTION  " .. (compactStates[windState] or windState), 6, 102, windColor, 1, nil, 166)
   L(5, 113, 175, 113, COLOR.dim)
 
   local linkText, linkColor = statusInfo(now)
@@ -354,7 +362,7 @@ local function renderMicro(now)
   line(2, 12, width - 1, 12, COLOR.dim)
   local solarState, solarColor = powerState(now, solarPowered, telemetry)
   local windState, windColor = powerState(now, windPowered, telemetryWind)
-  local microStates = { PRODUCING = "ON", CONFIGURED = "IDLE", ["LINK LOST"] = "LOST", UNKNOWN = "?" }
+  local microStates = { PRODUCING = "ON", STANDBY = "IDLE", CONFIGURED = "IDLE", ["LINK LOST"] = "LOST", UNKNOWN = "?" }
   local solarSummary = "S " .. countText(solar, solarKnown) .. " " .. (microStates[solarState] or solarState)
   local windSummary = "W " .. countText(wind, windKnown) .. " " .. (microStates[windState] or windState)
   drawText(solarSummary, 2, 16, solarColor, 1, nil, width - 4)
