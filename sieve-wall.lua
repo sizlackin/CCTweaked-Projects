@@ -386,18 +386,28 @@ local function drawHome(d)
     center(4, "NO LINK", colors.red, PANEL, 1, half)
   end
 
-  -- two taps to switch, so a stray click cannot stop the line
+  -- switch: first tap asks "TURN OFF?" with YES / NO, so a stray click
+  -- cannot stop the line. NO, any other tap, or 5 s idle cancels.
   fill(rx, 3, rw, 2, PANEL)
-  center(3, "SYSTEM", DIM, PANEL, rx, rw)
-  local armed = ui.armed and os.clock() - ui.armed < 3
-  local label, fg, bg = "OFFLINE", DIM, INSET
-  if armed then label, fg, bg = "TAP AGAIN", ON_SOLID, colors.orange
-  elseif power.on then label, fg, bg = "ACTIVE", ON_SOLID, colors.green end
-  fill(rx + 1, 4, rw - 2, 1, bg)
-  center(4, label, fg, bg, rx, rw)
-  hit(rx, 3, rw, 2, function()
-    if armed then ui.armed, ui.toggle = nil, true else ui.armed = os.clock() end
-  end)
+  if ui.armed and os.clock() - ui.armed < 5 then
+    center(3, power.on and "TURN OFF?" or "TURN ON?", TEXT, PANEL, rx, rw)
+    local bw = math.floor((rw - 3) / 2)
+    local yes = power.on and colors.red or colors.green
+    fill(rx + 1, 4, bw, 1, yes)
+    center(4, "YES", ON_SOLID, yes, rx + 1, bw)
+    fill(rx + rw - 1 - bw, 4, bw, 1, INSET)
+    center(4, "NO", TEXT, INSET, rx + rw - 1 - bw, bw)
+    hit(rx, 4, bw + 1, 1, function() ui.toggle = true end)
+    hit(rx + rw - 1 - bw, 4, bw + 1, 1, function() end)
+  else
+    center(3, "SYSTEM", DIM, PANEL, rx, rw)
+    local label, fg, bg = "OFFLINE", DIM, INSET
+    if power.on then label, fg, bg = "ACTIVE", ON_SOLID, colors.green end
+    fill(rx + 1, 4, rw - 2, 1, bg)
+    center(4, label, fg, bg, rx, rw)
+    hit(rx, 3, rw, 2, function() ui.armed = os.clock() end)
+  end
+
   at(cardX(1) + math.floor(CARD_W / 2), 5, "\31", DIM)
 
   -- one card per stage, left to right like the wall
@@ -609,7 +619,7 @@ local function drawHelp()
     at(5, 13 + k, l[2], TEXT, PANEL)
   end
   center(17, "Tap a card for details", DIM, PANEL)
-  center(18, "SYSTEM: tap twice, on/off", DIM, PANEL)
+  center(18, "SYSTEM: tap to turn on/off", DIM, PANEL)
 end
 
 local function render(d)
@@ -626,6 +636,7 @@ end
 
 local function touch(x, y)
   ui.touched = os.clock()
+  ui.armed = nil  -- any tap closes an open on/off question; "SYSTEM" re-opens it
   for k = #hits, 1, -1 do
     local h = hits[k]
     if x >= h[1] and x <= h[3] and y >= h[2] and y <= h[4] then h[5]() return true end
