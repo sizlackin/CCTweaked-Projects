@@ -185,7 +185,34 @@ local function readFactory(name)
     lanes = lanes + 1
     if (prog or 0) > 0 then busy = busy + 1 end
   end
-  return { energy = e or 0, busy = busy, lanes = lanes }
+  local okM, mode = pcall(p.getRedstoneMode)
+  return { energy = e or 0, busy = busy, lanes = lanes, mode = okM and mode or nil }
+end
+
+-- ---------------------------------------------------------------------------
+-- System power. The crushers are switched through their Mekanism redstone
+-- mode: "DISABLED" ignores redstone (always runs); "HIGH" runs only with a
+-- redstone signal, so with none wired in they stop and the energy goes on to
+-- other machines. Remembered across restarts.
+-- ---------------------------------------------------------------------------
+local STATE_FILE = "/sieve-wall.state"
+local power = { on = true }
+do
+  local f = fs.open(STATE_FILE, "r")
+  if f then power.on = f.readAll() ~= "off" f.close() end
+end
+local function wantMode() return power.on and "DISABLED" or "HIGH" end
+-- false when the factory refuses (its security is not public)
+local function applyMode(name)
+  local p = name and peripheral.wrap(name)
+  if not p or not p.setRedstoneMode then return false end
+  return (pcall(p.setRedstoneMode, wantMode()))
+end
+local function setPower(on, sys)
+  power.on = on
+  local f = fs.open(STATE_FILE, "w")
+  if f then f.write(on and "on" or "off") f.close() end
+  for i = 1, 3 do applyMode(sys.factories[i]) end
 end
 
 -- items per minute from a short history of totals
@@ -301,6 +328,7 @@ local function fillColor(frac)
 end
 local function crusherState(f)
   if not f then return "NO LINK", colors.red, true end
+  if not power.on then return "OFF", DIM end
   if f.energy < 0.05 then return "NO POWER", colors.red, true end
   if f.busy > 0 then return "ACTIVE", colors.green end
   return "IDLE", colors.orange
@@ -343,17 +371,33 @@ local function drawHome(d)
   at(W - 1, 1, "?", ON_SOLID, colors.cyan)
   hit(W - 3, 1, 4, 1, function() go("help") end)
 
-  -- cobble feed panel, feeding stage 1 below it
-  fill(1, 3, W, 2, PANEL)
-  center(3, "COBBLE FEED", DIM, PANEL)
+  -- cobble feed (left, above stage 1) | system power switch (right)
+  local half = math.floor((W - 1) / 2)
+  local rx, rw = half + 2, W - half - 1
+  fill(1, 3, half, 2, PANEL)
+  center(3, "COBBLE FEED", DIM, PANEL, 1, half)
   if d.cobble then
-    local n, r = commas(d.cobble.total), rateText(d.cobbleRate)
-    local sx = cx(n .. "   " .. r)
+    local n, r = compact(d.cobble.total), rateText(d.cobbleRate)
+    if #n + #r + 1 > half - 2 then r = r:gsub("/min$", "/m") end
+    local sx = cx(n .. " " .. r, 1, half)
     at(sx, 4, n, TEXT, PANEL)
-    at(sx + #n + 3, 4, r, DIM, PANEL)
+    at(sx + #n + 1, 4, r, DIM, PANEL)
   else
-    center(4, "NO LINK", colors.red, PANEL)
+    center(4, "NO LINK", colors.red, PANEL, 1, half)
   end
+
+  -- two taps to switch, so a stray click cannot stop the line
+  fill(rx, 3, rw, 2, PANEL)
+  center(3, "SYSTEM", DIM, PANEL, rx, rw)
+  local armed = ui.armed and os.clock() - ui.armed < 3
+  local label, fg, bg = "OFFLINE", DIM, INSET
+  if armed then label, fg, bg = "TAP AGAIN", ON_SOLID, colors.orange
+  elseif power.on then label, fg, bg = "ACTIVE", ON_SOLID, colors.green end
+  fill(rx + 1, 4, rw - 2, 1, bg)
+  center(4, label, fg, bg, rx, rw)
+  hit(rx, 3, rw, 2, function()
+    if armed then ui.armed, ui.toggle = nil, true else ui.armed = os.clock() end
+  end)
   at(cardX(1) + math.floor(CARD_W / 2), 5, "\31", DIM)
 
   -- one card per stage, left to right like the wall
@@ -564,7 +608,8 @@ local function drawHelp()
     led(3, 13 + k, l[1], PANEL, k == 3)
     at(5, 13 + k, l[2], TEXT, PANEL)
   end
-  center(18, "Tap a card for details", DIM, PANEL)
+  center(17, "Tap a card for details", DIM, PANEL)
+  center(18, "SYSTEM: tap twice, on/off", DIM, PANEL)
 end
 
 local function render(d)
@@ -610,7 +655,10 @@ local function collect(sys)
     local f = d.factories[i]
     if not f then alert("red", "BCF #" .. i .. " is not on the network.", "BCF #" .. i .. " no link")
     elseif f.energy < 0.05 then alert("red", "BCF #" .. i .. " has no power.", "BCF #" .. i .. " no power")
-    elseif f.busy == 0 then
+    elseif f.mode and f.mode:upper() ~= wantMode() and not applyMode(sys.factories[i]) then
+      alert("red", "BCF #" .. i .. " refused the on/off switch. Set its security to public.",
+        "BCF #" .. i .. " won't switch")
+    elseif f.busy == 0 and power.on then
       local feed = i == 1 and "cobble" or STAGES[i - 1].label:lower()
       alert("orange", "BCF #" .. i .. " is idle. Check its " .. feed .. " supply.",
         "BCF #" .. i .. " idle, no " .. feed)
@@ -644,6 +692,7 @@ end
 local function main()
   local sys = discover()
   printRoles()
+  setPower(power.on, sys)  -- put the crushers in the remembered state
   local data = collect(sys)
   render(data)
   local timer = os.startTimer(CONFIG.refresh)
@@ -651,7 +700,14 @@ local function main()
   while true do
     local ev, a, x, y = os.pullEvent()
     if ev == "monitor_touch" then
-      if touch(x, y) then render(data) end
+      if touch(x, y) then
+        if ui.toggle then
+          ui.toggle = nil
+          setPower(not power.on, sys)
+          data = collect(sys)
+        end
+        render(data)
+      end
     elseif ev == "timer" and a == blink then
       blinkOn = not blinkOn
       render(data)
