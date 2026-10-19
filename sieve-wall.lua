@@ -643,7 +643,10 @@ local function render(d)
   win.setVisible(false)
   win.setBackgroundColor(BG)
   win.clear()
-  if ui.page == "stage" then drawStage(d, ui.stage)
+  if not d then
+    titleBar("SIEVE WALL", TEXT)
+    center(math.floor(H / 2), "Reading machines...", DIM)
+  elseif ui.page == "stage" then drawStage(d, ui.stage)
   elseif ui.page == "alerts" then drawAlerts(d)
   elseif ui.page == "help" then drawHelp()
   else drawHome(d) end
@@ -716,46 +719,69 @@ local function printRoles()
   print("Wrong stage? Set names in CONFIG. Ctrl+T stops.")
 end
 
+-- Two loops. Peripheral calls each take a game tick, and CC drops any other
+-- event (a monitor touch!) that arrives while a call is waiting. So all the
+-- reading happens in `reader`, and `screen` never touches a peripheral: it
+-- hears every tap, answers it at once, and redraws when fresh data lands.
 local function main()
   local sys = discover()
   printRoles()
-  applyPower(sys)  -- put the crushers in the remembered state
-  local data = collect(sys)
+  local data           -- nil until the reader's first pass lands
+  local switched = true -- first pass puts the crushers in the remembered state
   render(data)
-  local timer = os.startTimer(CONFIG.refresh)
-  local blink = os.startTimer(0.5)
-  while true do
-    local ev, a, x, y = os.pullEvent()
-    if ev == "monitor_touch" then
-      if touch(x, y) then
-        local key = ui.toggle
-        if key then
-          ui.toggle = nil
-          if key == "system" then power.on = not power.on
-          else
-            local k = tonumber(key:match("%d+"))
-            power.stage[k] = not power.stage[k]
-          end
-          applyPower(sys)
-          data = collect(sys)
-        end
-        render(data)
+
+  local function reader()
+    local timer = os.startTimer(CONFIG.refresh)
+    os.queueEvent("sieve_switch")  -- read straight away
+    while true do
+      local ev, a = os.pullEvent()
+      local hooked = ev == "peripheral" or ev == "peripheral_detach"
+      if hooked then
+        sys = discover()
+        printRoles()
+        switched = true
       end
-    elseif ev == "timer" and a == blink then
-      blinkOn = not blinkOn
-      render(data)
-      blink = os.startTimer(0.5)
-    elseif ev == "timer" and a == timer then
-      -- wander back to the overview after a while untouched
-      if ui.page ~= "home" and os.clock() - ui.touched > CONFIG.idleReturn then go("home") end
-      data = collect(sys)
-      render(data)
-      timer = os.startTimer(CONFIG.refresh)
-    elseif ev == "peripheral" or ev == "peripheral_detach" then
-      sys = discover()
-      printRoles()
+      if hooked or ev == "sieve_switch" or (ev == "timer" and a == timer) then
+        if ev == "timer" then timer = os.startTimer(CONFIG.refresh) end
+        if switched then switched = false applyPower(sys) end
+        data = collect(sys)
+        os.queueEvent("sieve_data")
+      end
     end
   end
+
+  local function screen()
+    local blink = os.startTimer(0.5)
+    while true do
+      local ev, a, x, y = os.pullEvent()
+      if ev == "monitor_touch" then
+        if touch(x, y) then
+          local key = ui.toggle
+          if key then
+            ui.toggle = nil
+            if key == "system" then power.on = not power.on
+            else
+              local k = tonumber(key:match("%d+"))
+              power.stage[k] = not power.stage[k]
+            end
+            switched = true
+            os.queueEvent("sieve_switch")  -- reader sends it to the crushers
+          end
+          render(data)
+        end
+      elseif ev == "timer" and a == blink then
+        blinkOn = not blinkOn
+        -- wander back to the overview after a while untouched
+        if ui.page ~= "home" and os.clock() - ui.touched > CONFIG.idleReturn then go("home") end
+        render(data)
+        blink = os.startTimer(0.5)
+      elseif ev == "sieve_data" then
+        render(data)
+      end
+    end
+  end
+
+  parallel.waitForAny(reader, screen)
 end
 
 local ok, err = pcall(main)
