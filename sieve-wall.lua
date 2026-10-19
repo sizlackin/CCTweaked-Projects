@@ -450,8 +450,7 @@ local function drawHome(d)
     center(14, "BARREL", DIM, PANEL, x, CARD_W)
     if b then
       local full = b.fill >= 0.97
-      if not (full and not blinkOn) then bar(x + 1, 15, CARD_W - 2, b.fill, fillColor(b.fill))
-      else bar(x + 1, 15, CARD_W - 2, 0, BG) end
+      bar(x + 1, 15, CARD_W - 2, b.fill, fillColor(b.fill))
       center(16, pct(b.fill), full and colors.red or TEXT, PANEL, x, CARD_W)
     else
       center(15, "NO LINK", colors.red, PANEL, x, CARD_W)
