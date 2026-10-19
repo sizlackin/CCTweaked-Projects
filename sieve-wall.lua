@@ -196,23 +196,34 @@ end
 -- other machines. Remembered across restarts.
 -- ---------------------------------------------------------------------------
 local STATE_FILE = "/sieve-wall.state"
-local power = { on = true }
+-- `on` is the SYSTEM master switch; `stage[i]` is each crusher's own switch.
+local power = { on = true, stage = { true, true, true } }
 do
   local f = fs.open(STATE_FILE, "r")
-  if f then power.on = f.readAll() ~= "off" f.close() end
+  if f then
+    local raw = f.readAll()
+    f.close()
+    local t = textutils.unserialize(raw)
+    if type(t) == "table" then
+      power.on = t.on ~= false
+      for i = 1, 3 do power.stage[i] = not (t.stage and t.stage[i] == false) end
+    else
+      power.on = raw ~= "off"  -- older single-switch file
+    end
+  end
 end
-local function wantMode() return power.on and "DISABLED" or "HIGH" end
+local function running(i) return power.on and power.stage[i] end
+local function wantMode(i) return running(i) and "DISABLED" or "HIGH" end
 -- false when the factory refuses (its security is not public)
-local function applyMode(name)
+local function applyMode(name, i)
   local p = name and peripheral.wrap(name)
   if not p or not p.setRedstoneMode then return false end
-  return (pcall(p.setRedstoneMode, wantMode()))
+  return (pcall(p.setRedstoneMode, wantMode(i)))
 end
-local function setPower(on, sys)
-  power.on = on
+local function applyPower(sys)
   local f = fs.open(STATE_FILE, "w")
-  if f then f.write(on and "on" or "off") f.close() end
-  for i = 1, 3 do applyMode(sys.factories[i]) end
+  if f then f.write(textutils.serialize(power)) f.close() end
+  for i = 1, 3 do applyMode(sys.factories[i], i) end
 end
 
 -- items per minute from a short history of totals
@@ -326,9 +337,9 @@ local function fillColor(frac)
   if frac >= CONFIG.barrelWarn then return colors.orange end
   return colors.green
 end
-local function crusherState(f)
+local function crusherState(f, i)
   if not f then return "NO LINK", colors.red, true end
-  if not power.on then return "OFF", DIM end
+  if not running(i) then return "OFF", DIM end
   if f.energy < 0.05 then return "NO POWER", colors.red, true end
   if f.busy > 0 then return "ACTIVE", colors.green end
   return "IDLE", colors.orange
@@ -361,6 +372,33 @@ local function alertSummary(alerts)
   return #alerts .. (#alerts == 1 and " ALERT" or " ALERTS"), c, c == colors.red
 end
 
+-- On/off button. The first tap swaps the caption for "TURN OFF?" / "TURN ON?"
+-- and the button for YES / NO, so a stray click cannot stop anything. NO, any
+-- other tap, or 5 s idle cancels. `locked` shows a greyed label instead.
+local function switch(key, x, w, capY, caption, btnY, isOn, onLabel, offLabel, locked)
+  local a = ui.armed
+  if a and a.key == key and os.clock() - a.t < 5 then
+    fill(x, capY, w, 1, PANEL)
+    center(capY, isOn and "TURN OFF?" or "TURN ON?", TEXT, PANEL, x, w)
+    local bw = math.floor((w - 3) / 2)
+    local yes = isOn and colors.red or colors.green
+    fill(x + 1, btnY, bw, 1, yes)
+    center(btnY, "YES", ON_SOLID, yes, x + 1, bw)
+    fill(x + w - 1 - bw, btnY, bw, 1, INSET)
+    center(btnY, "NO", TEXT, INSET, x + w - 1 - bw, bw)
+    hit(x, btnY, bw + 1, 1, function() ui.toggle = key end)
+    hit(x + w - 1 - bw, btnY, bw + 1, 1, function() end)
+    return
+  end
+  center(capY, caption, DIM, PANEL, x, w)
+  local label, fg, bg = offLabel, DIM, INSET
+  if locked then label = locked
+  elseif isOn then label, fg, bg = onLabel, ON_SOLID, colors.green end
+  fill(x + 1, btnY, w - 2, 1, bg)
+  center(btnY, label, fg, bg, x, w)
+  if not locked then hit(x, btnY, w, 1, function() ui.armed = { key = key, t = os.clock() } end) end
+end
+
 local CARD_W = math.floor((W - 2) / 3)
 local function cardX(i) return 1 + (i - 1) * (CARD_W + 1) end
 
@@ -386,27 +424,8 @@ local function drawHome(d)
     center(4, "NO LINK", colors.red, PANEL, 1, half)
   end
 
-  -- switch: first tap asks "TURN OFF?" with YES / NO, so a stray click
-  -- cannot stop the line. NO, any other tap, or 5 s idle cancels.
   fill(rx, 3, rw, 2, PANEL)
-  if ui.armed and os.clock() - ui.armed < 5 then
-    center(3, power.on and "TURN OFF?" or "TURN ON?", TEXT, PANEL, rx, rw)
-    local bw = math.floor((rw - 3) / 2)
-    local yes = power.on and colors.red or colors.green
-    fill(rx + 1, 4, bw, 1, yes)
-    center(4, "YES", ON_SOLID, yes, rx + 1, bw)
-    fill(rx + rw - 1 - bw, 4, bw, 1, INSET)
-    center(4, "NO", TEXT, INSET, rx + rw - 1 - bw, bw)
-    hit(rx, 4, bw + 1, 1, function() ui.toggle = true end)
-    hit(rx + rw - 1 - bw, 4, bw + 1, 1, function() end)
-  else
-    center(3, "SYSTEM", DIM, PANEL, rx, rw)
-    local label, fg, bg = "OFFLINE", DIM, INSET
-    if power.on then label, fg, bg = "ACTIVE", ON_SOLID, colors.green end
-    fill(rx + 1, 4, rw - 2, 1, bg)
-    center(4, label, fg, bg, rx, rw)
-    hit(rx, 3, rw, 2, function() ui.armed = os.clock() end)
-  end
+  switch("system", rx, rw, 3, "SYSTEM", 4, power.on, "ACTIVE", "OFFLINE")
 
   at(cardX(1) + math.floor(CARD_W / 2), 5, "\31", DIM)
 
@@ -417,7 +436,7 @@ local function drawHome(d)
     fill(x, 6, CARD_W, 1, st.color)
     center(6, st.label, st.ink, st.color, x, CARD_W)
 
-    local s, scol, salarm = crusherState(f)
+    local s, scol, salarm = crusherState(f, i)
     ledLabel(8, scol, s == "NO POWER" and "NO PWR" or s, PANEL, salarm, x, CARD_W)
 
     if c then
@@ -476,18 +495,15 @@ local function drawStage(d, i)
   -- crusher | collection, side by side
   local half = math.floor((W - 1) / 2)
   local lx, rx, rw = 1, half + 2, W - half - 1
-  panel(lx, 4, half, 6, "CRUSHER")
-  local s, scol, alarm = crusherState(f)
+  panel(lx, 4, half, 6)
+  local s, scol, alarm = crusherState(f, i)
   ledLabel(5, scol, s, PANEL, alarm, lx, half)
   if f then
     center(6, "Power " .. pct(f.energy), TEXT, PANEL, lx, half)
     bar(lx + 1, 7, half - 2, f.energy, f.energy < 0.2 and colors.red or colors.cyan)
-    -- one light per lane; five lanes only fit without the caption
-    local label = f.lanes <= 3 and "Lanes " or ""
-    local sx = cx(label .. ("\140 "):rep(f.lanes - 1) .. "\140", lx, half)
-    at(sx, 8, label, DIM, PANEL)
-    for l = 1, f.lanes do led(sx + #label + (l - 1) * 2, 8, l <= f.busy and colors.green or BG, PANEL) end
   end
+  switch("stage" .. i, lx, half, 4, "CRUSHER", 9, power.stage[i], "ON", "OFF",
+    not power.on and "SYSTEM OFF" or nil)
 
   panel(rx, 4, rw, 6, "COLLECTION")
   if c then
@@ -666,10 +682,10 @@ local function collect(sys)
     local f = d.factories[i]
     if not f then alert("red", "BCF #" .. i .. " is not on the network.", "BCF #" .. i .. " no link")
     elseif f.energy < 0.05 then alert("red", "BCF #" .. i .. " has no power.", "BCF #" .. i .. " no power")
-    elseif f.mode and f.mode:upper() ~= wantMode() and not applyMode(sys.factories[i]) then
+    elseif f.mode and f.mode:upper() ~= wantMode(i) and not applyMode(sys.factories[i], i) then
       alert("red", "BCF #" .. i .. " refused the on/off switch. Set its security to public.",
         "BCF #" .. i .. " won't switch")
-    elseif f.busy == 0 and power.on then
+    elseif f.busy == 0 and running(i) then
       local feed = i == 1 and "cobble" or STAGES[i - 1].label:lower()
       alert("orange", "BCF #" .. i .. " is idle. Check its " .. feed .. " supply.",
         "BCF #" .. i .. " idle, no " .. feed)
@@ -703,7 +719,7 @@ end
 local function main()
   local sys = discover()
   printRoles()
-  setPower(power.on, sys)  -- put the crushers in the remembered state
+  applyPower(sys)  -- put the crushers in the remembered state
   local data = collect(sys)
   render(data)
   local timer = os.startTimer(CONFIG.refresh)
@@ -712,9 +728,15 @@ local function main()
     local ev, a, x, y = os.pullEvent()
     if ev == "monitor_touch" then
       if touch(x, y) then
-        if ui.toggle then
+        local key = ui.toggle
+        if key then
           ui.toggle = nil
-          setPower(not power.on, sys)
+          if key == "system" then power.on = not power.on
+          else
+            local k = tonumber(key:match("%d+"))
+            power.stage[k] = not power.stage[k]
+          end
+          applyPower(sys)
           data = collect(sys)
         end
         render(data)
